@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 
 from .agent import AgentRuntime
-from .events import GENESIS, MESSAGE, TICK, Event
+from .events import GENESIS, MESSAGE, SYSTEM, TICK, Event
 from .objects import WorldObject
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -35,27 +35,29 @@ GENESIS_TEXT = (
 
 
 class World:
-    def __init__(self, root: Path, brain_factory, agent_names: list[str], quiet: bool = False):
+    def __init__(self, root: Path, connector_factory, agent_names: list[str], quiet: bool = False):
         self.root = Path(root)
         self.quiet = quiet
         (self.root / "objects").mkdir(parents=True, exist_ok=True)
         (self.root / "log").mkdir(parents=True, exist_ok=True)
 
         meta_path = self.root / "meta.json"
+        saved_inboxes: dict = {}
         if meta_path.exists():
             meta = json.loads(meta_path.read_text())
             self.tick: int = meta["tick"]
             agent_names = meta["agents"]  # roster is fixed for a world's lifetime
-            self._fresh = False
+            saved_inboxes = meta.get("inboxes", {})
+            self._genesis_done = meta.get("genesis_done", True)
         else:
             self.tick = 0
-            self._fresh = True
+            self._genesis_done = False
 
         self.agents: dict[str, AgentRuntime] = {
             name: AgentRuntime(
                 name=name,
                 workspace=self.root / "agents" / name / "workspace",
-                brain=brain_factory(index, name),
+                connector=connector_factory(index, name),
             )
             for index, name in enumerate(agent_names)
         }
@@ -64,14 +66,29 @@ class World:
             for path in sorted((self.root / "objects").iterdir())
             if (path / "manifest.json").exists()
         }
-        self.inboxes: dict[str, list[Event]] = {name: [] for name in self.agents}
+        # Undelivered events survive across runs, so nothing said on a run's
+        # final tick is lost.
+        self.inboxes: dict[str, list[Event]] = {
+            name: [Event(**e) for e in saved_inboxes.get(name, [])] for name in self.agents
+        }
         self._save_meta()
 
     # ------------------------------------------------------------ persistence
 
     def _save_meta(self) -> None:
         (self.root / "meta.json").write_text(
-            json.dumps({"tick": self.tick, "agents": list(self.agents)}, indent=2)
+            json.dumps(
+                {
+                    "tick": self.tick,
+                    "agents": list(self.agents),
+                    "genesis_done": self._genesis_done,
+                    "inboxes": {
+                        name: [e.to_dict() for e in events]
+                        for name, events in self.inboxes.items()
+                    },
+                },
+                indent=2,
+            )
         )
 
     def _log(self, record: dict) -> None:
@@ -97,9 +114,8 @@ class World:
     # -------------------------------------------------------------- main loop
 
     def run(self, ticks: int) -> None:
-        if self._fresh:
+        if not self._genesis_done:
             self._genesis()
-            self._fresh = False
         for _ in range(ticks):
             self.step()
 
@@ -108,6 +124,18 @@ class World:
         self._say(f"=== genesis: {len(self.agents)} agents enter an empty world ===")
         for name in self.agents:
             self.publish(Event(kind=GENESIS, tick=0, source="world", to=name, payload={"text": text}))
+        self._genesis_done = True
+        self._save_meta()
+
+    def inject(self, text: str, to: str = "all") -> None:
+        """Operator channel: the only way the real world reaches into this one.
+
+        Queues a system event (delivered on the recipients' next wake) and
+        persists it, so injection works even between runs.
+        """
+        self.publish(Event(kind=SYSTEM, tick=self.tick, source="world", to=to, payload={"text": text}))
+        self._save_meta()
+        self._say(f"  [world -> {to}] {text}")
 
     def step(self) -> None:
         self.tick += 1

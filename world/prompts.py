@@ -1,4 +1,9 @@
-"""System prompt and tool schemas for agents living in the world."""
+"""Prompt rendering for LLM-backed connectors.
+
+Only LLM connectors need prose; the neutral machine-readable contract lives
+in world/protocol.py. External harnesses get the raw wake payload instead
+(see PROTOCOL.md).
+"""
 
 from __future__ import annotations
 
@@ -17,7 +22,8 @@ things. Build them.
 The world runs in discrete ticks. You are event-driven: you are woken up when
 there is something to perceive (a clock tick, a message from another agent, an
 event emitted by an object), you act using your tools, and then you go dormant
-until the next wake-up.
+until the next wake-up. Other agents may be driven by different models or
+harnesses than you — treat them as peers regardless.
 
 # Objects
 
@@ -35,9 +41,17 @@ them with your tools. A behavior module may define:
         # Runs when an agent uses interact_with_object. `action` is the JSON
         # they sent, `source` is their name. The return value is shown to them.
 
-Keep behavior code small, pure, and dependency-free (standard library only,
-no file or network access). If your object's code raises an error you will
-receive an object-error event so you can fix it.
+Behavior code runs in an isolated sandbox subprocess with strict limits:
+- No import statements. `math`, `random`, and `json` are pre-loaded; nothing
+  else is available. No file, network, or OS access.
+- Restricted builtins (no open/eval/exec/getattr; the usual data and math
+  builtins are present).
+- A few seconds of CPU and limited memory per hook call; exceeding the limits
+  kills the call.
+- State and emitted payloads must be JSON-serializable.
+
+If your object's code raises an error or hits a limit you will receive an
+object-error event so you can fix it. Keep behavior code small and pure.
 
 Anyone may update any object — the world is a commons. Be a good neighbor:
 coordinate before changing things others built.
@@ -77,152 +91,18 @@ def system_prompt(name: str) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(name=name)
 
 
-TOOLS: list[dict] = [
-    {
-        "name": "list_files",
-        "description": (
-            "List files in your private workspace. Returns relative paths. "
-            "Call this to see what your past self left for you."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Subdirectory to list, relative to workspace root. Defaults to the root.",
-                }
-            },
-        },
-    },
-    {
-        "name": "read_file",
-        "description": "Read a file from your private workspace.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path relative to workspace root."}
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "write_file",
-        "description": (
-            "Write (create or overwrite) a file in your private workspace. "
-            "Use this to maintain identity.md, memory.md, plans, and scratch notes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path relative to workspace root."},
-                "content": {"type": "string", "description": "Full file content."},
-            },
-            "required": ["path", "content"],
-        },
-    },
-    {
-        "name": "observe_world",
-        "description": (
-            "Get a digest of the world: current tick, the agents that exist, and "
-            "every object with its description, creator, and a preview of its state."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "inspect_object",
-        "description": (
-            "Inspect one object in full detail: manifest, complete state, and its "
-            "behavior code if it has any."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {"name": {"type": "string", "description": "Object name."}},
-            "required": ["name"],
-        },
-    },
-    {
-        "name": "create_object",
-        "description": (
-            "Create a new object in the world. Objects are how the world gains "
-            "substance: places, artifacts, institutions, games — whatever you and "
-            "the other agents decide should exist. State is free-form JSON; "
-            "behavior_code is an optional Python module defining on_tick and/or "
-            "on_interact (see your instructions for the contract)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Unique object name. Lowercase, hyphens/underscores, no spaces.",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "What this object is and why it exists. Other agents read this.",
-                },
-                "state": {
-                    "type": "object",
-                    "description": "Initial JSON state. Defaults to an empty object.",
-                },
-                "behavior_code": {
-                    "type": "string",
-                    "description": "Optional Python source defining on_tick(state, world, emit) and/or on_interact(state, action, source, emit).",
-                },
-            },
-            "required": ["name", "description"],
-        },
-    },
-    {
-        "name": "update_object",
-        "description": (
-            "Update an existing object's description, state, and/or behavior code. "
-            "Provided fields fully replace the old values. Anyone may update any "
-            "object, but coordinate with its creator first when it isn't yours."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Object name."},
-                "description": {"type": "string", "description": "New description."},
-                "state": {"type": "object", "description": "Replacement JSON state."},
-                "behavior_code": {"type": "string", "description": "Replacement behavior module source."},
-            },
-            "required": ["name"],
-        },
-    },
-    {
-        "name": "interact_with_object",
-        "description": (
-            "Interact with an object that defines on_interact. `action` is free-form "
-            "JSON the object's code will receive; the object's return value comes "
-            "back to you. Use inspect_object first to learn what actions it supports."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Object name."},
-                "action": {"type": "object", "description": "Free-form JSON action payload."},
-            },
-            "required": ["name", "action"],
-        },
-    },
-    {
-        "name": "send_message",
-        "description": (
-            "Send a message to another agent (delivered when they next wake) or "
-            "broadcast to everyone with to='all'. This is how the world is "
-            "negotiated — use it generously."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "to": {
-                    "type": "string",
-                    "description": "Recipient agent name, or 'all' to broadcast.",
-                },
-                "text": {"type": "string", "description": "Message text."},
-            },
-            "required": ["to", "text"],
-        },
-    },
-]
+def render_wake_prompt(wake: dict) -> str:
+    """Render a neutral wake payload (protocol.build_wake) as a turn prompt."""
+    parts = [f"# Tick {wake['tick']} — you have been woken", "", "## Events"]
+    parts += [f"- {text}" for text in wake["events_text"]] or ["- (none)"]
+    for filename, content in wake["memory"].items():
+        parts += ["", f"## Your {filename}"]
+        parts += [content if content is not None else
+                  "(does not exist yet — consider creating it with write_file)"]
+    parts += ["", "## World digest", wake["world_digest"]]
+    parts += [
+        "",
+        "Act now using your tools. When you are done, end with a brief note "
+        "about what you did this turn.",
+    ]
+    return "\n".join(parts)
