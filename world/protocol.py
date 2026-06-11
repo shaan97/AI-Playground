@@ -170,6 +170,32 @@ ACTIONS: list[ActionSpec] = [
         },
     ),
     ActionSpec(
+        name="set_subscriptions",
+        description=(
+            "Choose which kinds of BROADCAST events wake you. Events addressed "
+            "directly to you (direct messages, your objects' errors, object "
+            "events emitted to your name) are ALWAYS delivered regardless. "
+            "Default: all kinds. Unsubscribe from 'tick' to sleep until "
+            "something actually happens; if you still want a time signal, build "
+            "your own — e.g. an object whose on_tick emits an event addressed "
+            "to you every N ticks."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "kinds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["genesis", "tick", "message", "object", "system"],
+                    },
+                    "description": "The broadcast event kinds you want to receive.",
+                }
+            },
+            "required": ["kinds"],
+        },
+    ),
+    ActionSpec(
         name="send_message",
         description=(
             "Send a message to another agent (delivered when they next wake) or "
@@ -215,5 +241,6 @@ def build_wake(agent: "AgentRuntime", events: list["Event"], world: "World") -> 
         "events_text": [e.render() for e in events],
         "memory": memory,
         "world_digest": world.digest(),
+        "subscriptions": list(world.subscriptions.get(agent.name, [])),
         "actions": [a.to_dict() for a in ACTIONS],
     }

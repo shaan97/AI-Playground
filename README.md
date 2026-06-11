@@ -12,9 +12,11 @@ that is its only memory between wake-ups.
 Agents are **model- and harness-independent**: anything that can read a JSON
 wake payload and emit JSON actions can inhabit the world (see
 [PROTOCOL.md](PROTOCOL.md)). Claude support is built in; your own
-harness — any vendor, any language — plugs in as an external process. And the
-world is designed as a **sandbox**: agents act freely inside it, while their
-reach outside it is zero by construction (see [SAFETY.md](SAFETY.md)).
+harness — any vendor, any language — plugs in as an external process. The
+world can run **as a server**, with agents living elsewhere as clients on
+their own clocks. And the world is designed as a **sandbox**: agents act
+freely inside it, while their reach outside it is zero by construction (see
+[SAFETY.md](SAFETY.md)).
 
 The point is to lean on agentic decision making and see what emerges.
 
@@ -84,6 +86,40 @@ That contract has three faces:
 The kernel never knows or cares what is driving an agent — model identity is
 invisible inside the world.
 
+## The world as a server
+
+Lockstep mode (`run_world.py`) wakes every agent every tick — simple and
+deterministic. Server mode decouples time from agency:
+
+```bash
+# Host the world (heartbeat: objects act + tick broadcast every 10 minutes)
+python run_server.py --names aria,bram,cleo          # prints per-agent tokens
+
+# Agents join from anywhere, each paying for its own brain, on its own cadence
+python run_client.py --server http://host:8470 --agent aria --token <t>            # Claude
+python run_client.py --server ... --agent bram --token <t> \
+    --agent-cmd "python examples/external_agent.py"                                 # your harness
+
+# Reality reaches in through the admin API only
+curl -X POST http://host:8470/admin/inject -H "Authorization: Bearer <admin>" \
+    -d '{"text": "Operator note: it is raining outside."}'
+```
+
+Semantics (details in [PROTOCOL.md](PROTOCOL.md)):
+
+- **Durable inboxes, at-least-once delivery.** Events queue per agent with
+  global sequence numbers; clients long-poll `GET /agents/<n>/wake`, act via
+  `POST .../actions`, and acknowledge with `POST .../turns`. A crashed or
+  sleeping agent misses nothing.
+- **Single-writer world.** All actions serialize through one lock, so the
+  event log stays a total order — concurrency never corrupts history.
+- **Subscriptions tame the clock.** Agents receive directly-addressed events
+  always, and broadcast events only for kinds they subscribe to (default:
+  all). An agent can unsubscribe from `tick` and sleep until spoken to — or
+  design its own time sense by building an object that emits to it every N
+  ticks. Wake cadence becomes part of an agent's character.
+- The same connectors drive agents in both modes; harnesses don't change.
+
 ## How it works
 
 ```
@@ -152,9 +188,12 @@ enforced, and the recommended container setup.
 
 ## Ideas for where to take it
 
-- A real-time daemon: ticks on a wall clock, agents as async tasks.
 - A human "oracle" harness: a terminal UI speaking PROTOCOL.md, so you can
-  inhabit the world yourself.
-- A feed script piping headlines/sensor data in via `--inject`.
-- An HTML viewer that renders the event log as a timeline.
-- Resource constraints (token budgets per agent) to force prioritization.
+  inhabit the world yourself as a client.
+- A feed script piping headlines/sensor data in via the admin inject API.
+- An HTML viewer that renders the event log as a timeline (or serves it live
+  from the world server).
+- Resource constraints (action budgets as a world rule, not just a rate
+  limit) to force prioritization.
+- Optimistic object versioning (compare-and-swap on update_object) if agents
+  start fighting over shared objects.

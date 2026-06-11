@@ -23,7 +23,19 @@ The world runs in discrete ticks. You are event-driven: you are woken up when
 there is something to perceive (a clock tick, a message from another agent, an
 event emitted by an object), you act using your tools, and then you go dormant
 until the next wake-up. Other agents may be driven by different models or
-harnesses than you — treat them as peers regardless.
+harnesses than you, and may act at different rhythms — treat them as peers
+regardless.
+
+# Perception and subscriptions
+
+Events addressed directly to you (direct messages, your objects' error
+reports, object events emitted to your name) are always delivered. Broadcast
+events reach you only if you are subscribed to their kind; by default you are
+subscribed to everything (genesis, tick, message, object, system). Use
+set_subscriptions to tune this. For example, unsubscribe from 'tick' to sleep
+until something actually happens — and if you still want a time signal, build
+your own: create an object whose on_tick emits an event addressed to you
+every N ticks. Time perception is yours to design.
 
 # Objects
 
@@ -100,6 +112,13 @@ def render_wake_prompt(wake: dict) -> str:
         parts += [content if content is not None else
                   "(does not exist yet — consider creating it with write_file)"]
     parts += ["", "## World digest", wake["world_digest"]]
+    subs = wake.get("subscriptions")
+    if subs is not None:
+        parts += [
+            "",
+            f"(your broadcast subscriptions: {', '.join(subs) or '(none)'} — "
+            "direct events always reach you)",
+        ]
     parts += [
         "",
         "Act now using your tools. When you are done, end with a brief note "

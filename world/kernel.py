@@ -5,11 +5,22 @@ agents, objects, and events — nothing else. Geography, physics, economies,
 institutions: if the world is to have them, the agents must build them out
 of objects and conventions.
 
+Time is decoupled from agency: `advance_tick()` is the world's heartbeat
+(objects act, a tick event is broadcast), while agents may be driven either
+in lockstep (`step()`/`run()`, local mode) or at their own pace by remote
+clients (server mode — see world/server.py), which read their inboxes with
+cursors and acknowledge what they've consumed.
+
+Event routing rule: events addressed to a specific agent are ALWAYS
+delivered; broadcast events are delivered only to agents subscribed to that
+event kind (default: all kinds). This lets agents silence the clock without
+becoming unreachable.
+
 Everything is persisted under one data directory, so a world can be stopped,
 inspected with ordinary file tools, and resumed:
 
     <root>/
-        meta.json               # tick counter + agent roster
+        meta.json               # tick/seq counters, roster, subscriptions, inboxes
         agents/<name>/workspace # each agent's private filesystem
         objects/<name>/         # world objects (manifest/state/behavior)
         log/events.jsonl        # append-only log of everything that happened
@@ -22,10 +33,13 @@ import re
 from pathlib import Path
 
 from .agent import AgentRuntime
-from .events import GENESIS, MESSAGE, SYSTEM, TICK, Event
+from .events import GENESIS, MESSAGE, OBJECT, SYSTEM, TICK, Event
 from .objects import WorldObject
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+EVENT_KINDS = [GENESIS, TICK, MESSAGE, OBJECT, SYSTEM]
+MAX_INBOX = 1000
 
 GENESIS_TEXT = (
     "The world is empty. You are one of {n} agents: {names}. Nothing exists yet "
@@ -43,14 +57,18 @@ class World:
 
         meta_path = self.root / "meta.json"
         saved_inboxes: dict = {}
+        saved_subs: dict = {}
         if meta_path.exists():
             meta = json.loads(meta_path.read_text())
             self.tick: int = meta["tick"]
+            self.seq: int = meta.get("seq", 0)
             agent_names = meta["agents"]  # roster is fixed for a world's lifetime
             saved_inboxes = meta.get("inboxes", {})
+            saved_subs = meta.get("subscriptions", {})
             self._genesis_done = meta.get("genesis_done", True)
         else:
             self.tick = 0
+            self.seq = 0
             self._genesis_done = False
 
         self.agents: dict[str, AgentRuntime] = {
@@ -58,6 +76,7 @@ class World:
                 name=name,
                 workspace=self.root / "agents" / name / "workspace",
                 connector=connector_factory(index, name),
+                world=self,
             )
             for index, name in enumerate(agent_names)
         }
@@ -67,9 +86,12 @@ class World:
             if (path / "manifest.json").exists()
         }
         # Undelivered events survive across runs, so nothing said on a run's
-        # final tick is lost.
+        # final tick (or while a remote agent was offline) is lost.
         self.inboxes: dict[str, list[Event]] = {
             name: [Event(**e) for e in saved_inboxes.get(name, [])] for name in self.agents
+        }
+        self.subscriptions: dict[str, list[str]] = {
+            name: list(saved_subs.get(name, EVENT_KINDS)) for name in self.agents
         }
         self._save_meta()
 
@@ -80,8 +102,10 @@ class World:
             json.dumps(
                 {
                     "tick": self.tick,
+                    "seq": self.seq,
                     "agents": list(self.agents),
                     "genesis_done": self._genesis_done,
+                    "subscriptions": self.subscriptions,
                     "inboxes": {
                         name: [e.to_dict() for e in events]
                         for name, events in self.inboxes.items()
@@ -102,24 +126,43 @@ class World:
     # ----------------------------------------------------------------- events
 
     def publish(self, event: Event) -> None:
-        """Log an event and place it in the right inboxes."""
+        """Log an event and place it in the right inboxes.
+
+        Direct events always reach their recipient; broadcasts reach only
+        agents subscribed to the event's kind.
+        """
+        self.seq += 1
+        event.seq = self.seq
         self._log(event.to_dict())
         if event.to == "all":
             for name in self.agents:
-                if name != event.source:
-                    self.inboxes[name].append(event)
+                if name == event.source:
+                    continue
+                if event.kind not in self.subscriptions[name]:
+                    continue
+                self._deliver(name, event)
         elif event.to in self.inboxes:
-            self.inboxes[event.to].append(event)
+            self._deliver(event.to, event)
+
+    def _deliver(self, name: str, event: Event) -> None:
+        inbox = self.inboxes[name]
+        inbox.append(event)
+        if len(inbox) > MAX_INBOX:
+            dropped = len(inbox) - MAX_INBOX
+            del inbox[:dropped]
+            self._log({"kind": "inbox_overflow", "agent": name, "dropped": dropped})
+
+    def ack(self, name: str, cursor: int) -> None:
+        """Consume an agent's inbox up to (and including) `cursor`. Used by
+        remote clients; lockstep mode consumes inboxes wholesale instead."""
+        self.inboxes[name] = [e for e in self.inboxes[name] if e.seq > cursor]
+        self._save_meta()
 
     # -------------------------------------------------------------- main loop
 
-    def run(self, ticks: int) -> None:
-        if not self._genesis_done:
-            self._genesis()
-        for _ in range(ticks):
-            self.step()
-
-    def _genesis(self) -> None:
+    def ensure_genesis(self) -> None:
+        if self._genesis_done:
+            return
         text = GENESIS_TEXT.format(n=len(self.agents), names=", ".join(self.agents))
         self._say(f"=== genesis: {len(self.agents)} agents enter an empty world ===")
         for name in self.agents:
@@ -137,30 +180,40 @@ class World:
         self._save_meta()
         self._say(f"  [world -> {to}] {text}")
 
-    def step(self) -> None:
+    def advance_tick(self) -> None:
+        """One heartbeat: objects act, then the tick is broadcast. Does not
+        schedule agents — lockstep mode does that in step(); in server mode
+        agents are remote clients acting on their own cadence."""
         self.tick += 1
         self._say(f"\n=== tick {self.tick} ===")
-
-        # 1. Objects act: run every behavior and publish what they emit.
         snapshot = self.snapshot()
         for obj in list(self.objects.values()):
             for event in obj.run_tick(snapshot, self.tick):
                 self._say(f"  {event.render()}")
                 self.publish(event)
+        self.publish(Event(kind=TICK, tick=self.tick, source="world", to="all"))
+        self._save_meta()
 
-        # 2. Agents act, in roster order. Each receives its queued events plus
-        #    the tick itself. Messages sent during a turn land in inboxes
-        #    immediately, so agents later in the round hear them this tick and
-        #    earlier ones next tick.
+    def run(self, ticks: int) -> None:
+        """Lockstep mode: heartbeat + every agent takes a turn, each tick."""
+        self.ensure_genesis()
+        for _ in range(ticks):
+            self.step()
+
+    def step(self) -> None:
+        self.advance_tick()
         for name, agent in self.agents.items():
             inbox = self.inboxes[name]
             self.inboxes[name] = []
-            inbox.append(Event(kind=TICK, tick=self.tick, source="world", to=name))
-            note = agent.take_turn(inbox, self)
-            self._log({"kind": "turn", "tick": self.tick, "agent": name, "note": note})
-            self._say(f"  [{name}] {note}")
-
+            if not inbox:
+                continue  # nothing to perceive (e.g. unsubscribed from ticks)
+            note = agent.take_turn(inbox)
+            self.record_turn(name, note)
         self._save_meta()
+
+    def record_turn(self, name: str, note: str) -> None:
+        self._log({"kind": "turn", "tick": self.tick, "agent": name, "note": note})
+        self._say(f"  [{name}] {note}")
 
     # ------------------------------------------------------------- world view
 
@@ -193,6 +246,20 @@ class World:
         return "\n".join(lines)
 
     # ------------------------------------------------------- agent-facing API
+
+    def set_subscriptions(self, name: str, kinds: list) -> str:
+        kinds = list(dict.fromkeys(str(k) for k in kinds))
+        invalid = [k for k in kinds if k not in EVENT_KINDS]
+        if invalid:
+            return f"error: unknown event kinds {invalid} (valid: {', '.join(EVENT_KINDS)})"
+        self.subscriptions[name] = kinds
+        self._log({"kind": "subscriptions", "tick": self.tick, "agent": name, "kinds": kinds})
+        self._save_meta()
+        self._say(f"  [{name}] subscriptions -> {', '.join(kinds) or '(none)'}")
+        return (
+            f"broadcast subscriptions set to: {', '.join(kinds) or '(none)'}. "
+            "Events addressed directly to you are always delivered."
+        )
 
     def create_object(
         self,

@@ -23,22 +23,21 @@ MAX_FILE_CHARS = 512_000
 
 
 class AgentRuntime:
-    def __init__(self, name: str, workspace: Path, connector: Connector):
+    def __init__(self, name: str, workspace: Path, connector: Connector | None, world: "World"):
         self.name = name
         self.workspace = workspace
         self.workspace.mkdir(parents=True, exist_ok=True)
+        # None in server mode: the brain lives in a remote client and the
+        # runtime only serves workspace + action dispatch.
         self.connector = connector
-        self._world: "World | None" = None
+        self._world = world
 
     # ----------------------------------------------------------------- turns
 
-    def take_turn(self, events: list[Event], world: "World") -> str:
-        self._world = world
-        try:
-            wake = build_wake(self, events, world)
-            return self.connector.take_turn(wake, self.dispatch)
-        finally:
-            self._world = None
+    def take_turn(self, events: list[Event]) -> str:
+        assert self.connector is not None, f"agent {self.name} has no local connector"
+        wake = build_wake(self, events, self._world)
+        return self.connector.take_turn(wake, self.dispatch)
 
     # ------------------------------------------------------------- workspace
 
@@ -61,7 +60,6 @@ class AgentRuntime:
 
     def _dispatch_inner(self, action_name: str, action_input: dict) -> str:
         world = self._world
-        assert world is not None, "action dispatched outside a turn"
 
         if action_name == "list_files":
             root = self._resolve(action_input.get("path", "."))
@@ -119,6 +117,9 @@ class AgentRuntime:
                 name=action_input["name"],
                 action=action_input.get("action", {}),
             )
+
+        if action_name == "set_subscriptions":
+            return world.set_subscriptions(self.name, list(action_input.get("kinds", [])))
 
         if action_name == "send_message":
             return world.send_message(

@@ -44,9 +44,20 @@ There are three kinds of code with three different trust levels:
    diff and inspect.
 
 5. **Read-only reality.** Information flows in only via the operator inject
-   channel (`--inject`, or `World.inject()`), which queues a `system` event.
-   You can pipe news, sensor data, or anything else *into* the world this
-   way; there is no corresponding channel out.
+   channel (`--inject`, `World.inject()`, or `POST /admin/inject` in server
+   mode), which queues a `system` event. You can pipe news, sensor data, or
+   anything else *into* the world this way; there is no corresponding
+   channel out.
+
+6. **Server mode boundaries** (`run_server.py`): binds to `127.0.0.1` by
+   default; every endpoint requires a bearer token; an agent's token only
+   reads that agent's inbox and acts as that agent (admin operations need
+   the separate admin token); actions are rate-limited per agent and
+   serialized through a single writer, so a hostile client can be noisy but
+   cannot corrupt state or impersonate others. Tokens live in
+   `<data-dir>/tokens.json` (mode 0600). If you expose the server beyond
+   localhost, put it behind TLS (a reverse proxy) — tokens travel in
+   headers.
 
 ## What the kernel does NOT enforce (residual risks)
 
@@ -62,6 +73,11 @@ There are three kinds of code with three different trust levels:
   minimal: wake in, actions out.
 - **Agents can read what's in their workspace and events** — don't inject
   secrets into the world.
+- **In server mode, clients are outside your trust boundary entirely.** The
+  server constrains what they can do *to the world* (tokens, rate limits,
+  the effector-free action surface) but has no say over what the client
+  machine does. That cuts both ways: it also means client operators bear
+  their own model costs and their own harness risk.
 
 ## Recommended deployment (hard guarantees)
 

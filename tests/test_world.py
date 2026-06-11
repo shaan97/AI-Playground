@@ -1,4 +1,4 @@
-"""Kernel, sandbox, and protocol tests — no API key required.
+"""Kernel, sandbox, protocol, and server tests — no API key required.
 
 Run with:  python tests/test_world.py   (or pytest)
 """
@@ -8,14 +8,17 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from world import sandbox
+from world.client import WorldClient
 from world.connectors import MockConnector, ProcessConnector
 from world.kernel import World
+from world.server import WorldServer
 
 
 def make_world(root: Path) -> World:
@@ -147,6 +150,156 @@ def test_sandbox_allows_math_and_emit():
     assert res.ok, res.error
     assert res.state == {"root": 4.0}
     assert res.emitted == [{"payload": {"hello": True}, "to": "alpha"}]
+
+
+def test_subscriptions_filter_broadcasts_not_directs():
+    with tempfile.TemporaryDirectory() as tmp:
+        world = make_world(Path(tmp) / "w")
+        world.ensure_genesis()
+        world.inboxes = {name: [] for name in world.agents}  # clear genesis
+
+        result = world.set_subscriptions("beta", ["message"])
+        assert "message" in result and not result.startswith("error:")
+        assert world.set_subscriptions("beta", ["nonsense"]).startswith("error:")
+
+        world.advance_tick()
+        kinds_beta = {e.kind for e in world.inboxes["beta"]}
+        kinds_alpha = {e.kind for e in world.inboxes["alpha"]}
+        assert "tick" not in kinds_beta, kinds_beta  # unsubscribed
+        assert "tick" in kinds_alpha  # default subscription intact
+
+        # Broadcast system events are filtered too...
+        world.inject("for everyone", to="all")
+        assert not any(e.kind == "system" for e in world.inboxes["beta"])
+        # ...but direct events always land, regardless of subscriptions.
+        world.inject("for beta only", to="beta")
+        world.send_message(source="alpha", to="beta", text="psst")
+        texts = [e.payload.get("text") for e in world.inboxes["beta"]]
+        assert "for beta only" in texts and "psst" in texts
+
+        # Subscriptions persist across reloads.
+        reloaded = make_world(world.root)
+        assert reloaded.subscriptions["beta"] == ["message"]
+
+
+def test_custom_timer_replaces_tick():
+    """The pattern subscriptions enable: silence the clock, build your own."""
+    with tempfile.TemporaryDirectory() as tmp:
+        world = make_world(Path(tmp) / "w")
+        world.ensure_genesis()
+        world.inboxes = {name: [] for name in world.agents}
+        world.set_subscriptions("beta", [])  # total silence from broadcasts
+        world.create_object(
+            creator="beta",
+            name="alarm",
+            description="emits a chime to beta every 2 ticks",
+            state={},
+            behavior_code=(
+                "def on_tick(state, world, emit):\n"
+                "    if world['tick'] % 2 == 0:\n"
+                "        emit({'chime': world['tick']}, to='beta')\n"
+            ),
+        )
+        world.advance_tick()  # tick 1: nothing for beta
+        assert world.inboxes["beta"] == []
+        world.advance_tick()  # tick 2: chime (direct), but no tick broadcast
+        kinds = [(e.kind, e.payload) for e in world.inboxes["beta"]]
+        assert kinds == [("object", {"chime": 2})], kinds
+
+
+def test_server_client_end_to_end():
+    """The world as a server; agents joining as clients at their own pace."""
+    tokens = {"admin": "adm-token", "agents": {"alpha": "tok-a", "beta": "tok-b"}}
+
+    def http(method, path, token, body=None):
+        req = urllib.request.Request(
+            f"http://{server.host}:{server.port}{path}",
+            data=json.dumps(body).encode() if body is not None else None,
+            method=method,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read()
+                return resp.status, json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read() or b"{}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        world = World(
+            root=Path(tmp) / "w",
+            connector_factory=lambda i, n: None,  # brains live in the clients
+            agent_names=["alpha", "beta"],
+            quiet=True,
+        )
+        server = WorldServer(world, tokens=tokens, port=0, tick_interval=0)  # manual time
+        server.start()
+        try:
+            # Auth is enforced.
+            status, _ = http("GET", "/world", "wrong-token")
+            assert status == 403
+            status, info = http("GET", "/world", "tok-a")
+            assert status == 200 and info["agents"] == ["alpha", "beta"]
+
+            # alpha joins as a client and wakes on its pending genesis event.
+            alpha = WorldClient(
+                f"http://{server.host}:{server.port}", "alpha", "tok-a",
+                MockConnector(builder=True), wait=5, quiet=True,
+            )
+            assert alpha.run(max_wakes=1) == 1
+            with server.lock:
+                assert "beacon" in world.objects
+                assert not world.inboxes["alpha"]  # acked after the turn
+
+            # beta unsubscribes from ticks via the HTTP action endpoint.
+            status, body = http("POST", "/agents/beta/actions", "tok-b",
+                                {"name": "set_subscriptions", "input": {"kinds": ["message"]}})
+            assert status == 200 and not body["content"].startswith("error:")
+
+            # Admin advances time twice; beacon pulses on even ticks.
+            assert http("POST", "/admin/step", "adm-token", {})[1]["tick"] == 1
+            assert http("POST", "/admin/step", "adm-token", {})[1]["tick"] == 2
+            with server.lock:
+                beta_kinds = {e.kind for e in world.inboxes["beta"]}
+                alpha_kinds = {e.kind for e in world.inboxes["alpha"]}
+            assert "tick" not in beta_kinds, beta_kinds        # unsubscribed
+            assert "tick" in alpha_kinds                       # still subscribed
+            # beta still has genesis + alpha's greeting + pulse?? — pulse is a
+            # broadcast 'object' event, filtered out by beta's subscription.
+            assert "object" not in beta_kinds, beta_kinds
+
+            # A direct admin inject reaches beta despite its narrow subscription.
+            http("POST", "/admin/inject", "adm-token", {"text": "hello beta", "to": "beta"})
+            beta = WorldClient(
+                f"http://{server.host}:{server.port}", "beta", "tok-b",
+                MockConnector(builder=False), wait=5, quiet=True,
+            )
+            assert beta.run(max_wakes=1) == 1
+            memory = (world.root / "agents" / "beta" / "workspace" / "memory.md").read_text()
+            assert "Turn 1" in memory
+
+            # Turn notes from remote clients land in the world log.
+            log_text = (world.root / "log" / "events.jsonl").read_text()
+            assert '"kind": "turn"' in log_text
+        finally:
+            server.shutdown()
+
+
+def test_server_rate_limit():
+    tokens = {"admin": "adm", "agents": {"alpha": "tok-a", "beta": "tok-b"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        world = World(root=Path(tmp) / "w", connector_factory=lambda i, n: None,
+                      agent_names=["alpha", "beta"], quiet=True)
+        server = WorldServer(world, tokens=tokens, port=0, tick_interval=0, rate_limit=3)
+        server.start()
+        try:
+            client = WorldClient(f"http://{server.host}:{server.port}", "alpha", "tok-a",
+                                 None, quiet=True)
+            for _ in range(3):
+                assert not client.dispatch("observe_world", {}).startswith("error:")
+            assert "429" in client.dispatch("observe_world", {})
+        finally:
+            server.shutdown()
 
 
 def test_process_harness_end_to_end():

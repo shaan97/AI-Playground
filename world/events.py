@@ -24,6 +24,7 @@ class Event:
     source: str
     to: str = "all"
     payload: dict = field(default_factory=dict)
+    seq: int = 0  # global sequence number, assigned by the kernel at publish
 
     def to_dict(self) -> dict:
         return asdict(self)
