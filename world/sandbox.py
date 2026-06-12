@@ -83,6 +83,9 @@ out = {
     "result": None,
     "error": None,
 }
+# Failures must be atomic: snapshot the input state so a hook that mutates
+# and then raises reports the original, not a half-applied mutation.
+_pristine_state = json.dumps(payload["state"])
 try:
     exec(compile(payload["code"], "<behavior.py>", "exec"), _glb)
     hook = _glb.get(payload["hook"])
@@ -102,7 +105,7 @@ except BaseException as exc:
     out = {
         "ok": False,
         "missing": False,
-        "state": payload["state"],
+        "state": json.loads(_pristine_state),
         "emitted": [],
         "result": None,
         "error": repr(exc),
@@ -166,5 +169,5 @@ def run_hook(
         state=out.get("state") if isinstance(out.get("state"), dict) else state,
         emitted=[e for e in out.get("emitted", []) if isinstance(e, dict)],
         result=out.get("result"),
-        error=out.get("error"),
+        error=str(out["error"]) if out.get("error") else None,
     )

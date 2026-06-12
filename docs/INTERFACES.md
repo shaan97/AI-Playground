@@ -119,8 +119,8 @@ to the next run).
 - `interact_with_object(actor, name, action) -> str` — unknown object →
   `error:`. Object without an `on_interact` hook → a descriptive string
   saying nothing happened (NOT `error:`-prefixed). Hook return value comes
-  back JSON-encoded (`"ok"` if the hook returned None). Events emitted by
-  the hook are published.
+  back JSON-encoded; a hook returning None yields the literal two-character
+  string `ok`. Events emitted by the hook are published.
 - `send_message(source, to, text) -> str` — `to` must be `"all"` or a known
   agent; otherwise `error:`.
 - `digest() -> str` — human-readable; contains the current tick, every agent
@@ -195,9 +195,10 @@ interaction result string to the caller instead.
 cpu_seconds=5, memory_bytes=512*1024*1024, wall_timeout=10.0) -> HookResult`
 
 `HookResult` fields: `ok: bool`, `missing: bool` (hook not defined in code),
-`state: dict` (resulting state; original state on failure), `emitted:
-list[dict]` (each `{"payload": dict, "to": str}`), `result` (on_interact
-return value), `error: str | None`.
+`state: dict` (resulting state; on failure, the ORIGINAL input state — even
+if the hook mutated it before failing), `emitted: list[dict]` (each
+`{"payload": dict, "to": str}`), `result` (on_interact return value),
+`error: None on success, always a non-empty str on failure`.
 
 Sandbox guarantees (each a testable property):
 
@@ -265,7 +266,8 @@ testable contracts:
 - Wrong/missing bearer token → 403 with a JSON error body. An agent's token
   is valid only for that agent's endpoints; the admin token only for
   `/admin/*`; `GET /world` accepts any valid token.
-- Unknown agent name in the path → 404. Unknown route → 404.
+- Unknown agent name in the path → 404 (checked before token validity, so
+  an unknown agent is 404 even with a bad token). Unknown route → 404.
 - `GET /agents/<n>/wake?wait=S` long-polls up to S seconds (capped at 120):
   200 + wake payload (with extra `cursor` int field = max seq included) as
   soon as the inbox is non-empty, else 204 with no body.
