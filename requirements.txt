@@ -1,1 +1,6 @@
-anthropic>=0.69
+# The world server and the reference client (client.py) are stdlib-only —
+# there are no third-party runtime dependencies.
+#
+# Agents are opaque clients: build a harness with whatever libraries you like,
+# on whatever machine you like. The bundled Ollama example
+# (examples/ollama_agent.py) also needs only the standard library.
