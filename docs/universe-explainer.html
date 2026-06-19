@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Universe — a substrate, built up slowly</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --dim:#9aa7b4;
+    --line:#2d3643; --accent:#7ee787; --accent2:#79c0ff; --warn:#f0b86e; --bad:#ff7b72;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.65;font-size:17px}
+  .wrap{max-width:860px;margin:0 auto;padding:0 22px 120px}
+  header.hero{padding:90px 22px 60px;text-align:center;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 400px at 50% -120px,rgba(121,192,255,.12),transparent)}
+  .hero h1{font-size:clamp(34px,6vw,54px);margin:0 0 10px;letter-spacing:-.02em}
+  .hero p{color:var(--dim);max-width:620px;margin:0 auto;font-size:18px}
+  .hero .tag{display:inline-block;margin-bottom:22px;font-family:var(--mono);font-size:12px;
+    color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:5px 14px;background:var(--panel)}
+  nav.toc{max-width:860px;margin:34px auto 0;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 22px}
+  nav.toc a{font-family:var(--mono);font-size:12.5px;color:var(--dim);text-decoration:none;
+    border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--panel);transition:.15s}
+  nav.toc a:hover{color:var(--ink);border-color:var(--accent2)}
+  section.step{padding:54px 0 10px;border-bottom:1px solid var(--line)}
+  .stepnum{font-family:var(--mono);font-size:13px;color:var(--accent2);letter-spacing:.08em;text-transform:uppercase}
+  h2{font-size:28px;margin:6px 0 18px;letter-spacing:-.01em}
+  h3{font-size:19px;margin:28px 0 8px;color:var(--ink)}
+  p{margin:14px 0}
+  code{font-family:var(--mono);font-size:.88em;background:var(--panel2);padding:2px 6px;border-radius:5px;color:var(--accent)}
+  .lead{font-size:18.5px;color:var(--ink)}
+  .muted{color:var(--dim)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:22px 0}
+  .formula{font-family:var(--mono);font-size:16px;text-align:center;background:#0a0e14;border:1px solid var(--line);
+    border-radius:10px;padding:18px;color:var(--accent);margin:18px 0;overflow-x:auto}
+  .callout{border-radius:12px;padding:16px 18px;margin:20px 0;border:1px solid var(--line);background:var(--panel2)}
+  .callout .kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;display:block;margin-bottom:6px}
+  .tradeoff{border-left:3px solid var(--warn)} .tradeoff .kicker{color:var(--warn)}
+  .decide{border-left:3px solid var(--accent)} .decide .kicker{color:var(--accent)}
+  .aha{border-left:3px solid var(--accent2)} .aha .kicker{color:var(--accent2)}
+  svg{max-width:100%;height:auto;display:block;margin:18px auto}
+  .figcap{text-align:center;color:var(--dim);font-size:13.5px;margin:-6px 0 20px}
+  table{width:100%;border-collapse:collapse;margin:20px 0;font-size:15px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--accent2);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+  td.yes{color:var(--accent)} td.no{color:var(--bad)}
+  .sim{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin:24px 0}
+  .sim h4{margin:0 0 4px;font-size:16px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0}
+  button{font-family:var(--sans);font-size:14px;background:var(--accent2);color:#06223f;border:0;
+    border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;transition:.12s}
+  button:hover{filter:brightness(1.08)} button.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .switch{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--dim);cursor:pointer;user-select:none}
+  .switch input{accent-color:var(--accent)}
+  .stat{font-family:var(--mono);font-size:13px;color:var(--dim)}
+  .stat b{color:var(--ink)}
+  #log{font-family:var(--mono);font-size:12.5px;color:var(--dim);background:#0a0e14;border:1px solid var(--line);
+    border-radius:8px;padding:10px 12px;height:118px;overflow-y:auto;margin-top:12px;white-space:pre-wrap}
+  .footer{padding-top:50px;color:var(--dim);font-size:14px;text-align:center}
+  .footer code{font-size:.85em}
+  .pill{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-radius:6px;padding:2px 7px;color:var(--dim)}
+  a.inline{color:var(--accent2)}
+</style>
+</head>
+<body>
+<header class="hero">
+  <span class="tag">AI&nbsp;Universe · design explainer</span>
+  <h1>One thing, one rule</h1>
+  <p>How a world for AI agents can be built from a single primitive — an object that changes over time — and what each design choice buys and costs along the way.</p>
+</header>
+
+<nav class="toc">
+  <a href="#s1">1 · A thing with state</a>
+  <a href="#s2">2 · Time</a>
+  <a href="#s3">3 · Chance</a>
+  <a href="#s4">4 · Relationships</a>
+  <a href="#s5">5 · Synchrony</a>
+  <a href="#s6">6 · Growth</a>
+  <a href="#s7">7 · Minds</a>
+  <a href="#s8">8 · Discovery</a>
+  <a href="#s9">9 · The engine</a>
+</nav>
+
+<div class="wrap">
+
+<!-- 1 -->
+<section class="step" id="s1">
+  <div class="stepnum">Step 1</div>
+  <h2>A thing with state</h2>
+  <p class="lead">We start with the smallest possible idea: an <b>object</b>. It is just a vertex that holds some <b>state</b> — any structured data it wants to carry.</p>
+  <p>State is free-form. JSON is the easy default: inspectable, serializable, as rich or as sparse as the object needs.</p>
+  <div class="formula">{ "kind": "basketball", "holder": "P3" }</div>
+  <p class="muted">That's it for now — a labeled blob of data. No behavior, no neighbors, no clock. We'll add exactly one capability at a time and watch what becomes possible.</p>
+</section>
+
+<!-- 2 -->
+<section class="step" id="s2">
+  <div class="stepnum">Step 2</div>
+  <h2>Time: a state becomes a function of its past</h2>
+  <p class="lead">Give the object a <b>transition function</b> <code>f</code>. Each tick, its next state is computed from its current one.</p>
+  <div class="formula">state<sub>t+1</sub> = f(state<sub>t</sub>)</div>
+  <p>An object is now a <b>time series</b>. The function is ordinary (sandboxed) Python — so "anything computable from the current state" is expressible. A clock counts up; a candle burns down; a seed sprouts.</p>
+  <svg width="620" height="120" viewBox="0 0 620 120" role="img" aria-label="A state evolving across ticks">
+    <defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#79c0ff"/></marker></defs>
+    <g font-family="monospace" font-size="13" fill="#e6edf3" text-anchor="middle">
+      <rect x="20"  y="40" width="110" height="40" rx="8" fill="#1c2230" stroke="#2d3643"/><text x="75"  y="64">count: 0</text>
+      <rect x="190" y="40" width="110" height="40" rx="8" fill="#1c2230" stroke="#2d3643"/><text x="245" y="64">count: 1</text>
+      <rect x="360" y="40" width="110" height="40" rx="8" fill="#1c2230" stroke="#2d3643"/><text x="415" y="64">count: 2</text>
+      <rect x="530" y="40" width="70"  height="40" rx="8" fill="#1c2230" stroke="#2d3643"/><text x="565" y="64">…</text>
+    </g>
+    <g stroke="#79c0ff" stroke-width="1.6" marker-end="url(#arr)">
+      <line x1="132" y1="60" x2="186" y2="60"/><line x1="302" y1="60" x2="356" y2="60"/><line x1="472" y1="60" x2="526" y2="60"/>
+    </g>
+    <g font-family="monospace" font-size="11" fill="#9aa7b4" text-anchor="middle">
+      <text x="159" y="34">f</text><text x="329" y="34">f</text><text x="499" y="34">f</text>
+    </g>
+  </svg>
+  <div class="figcap">One object, advancing under <code>f</code>, tick by tick.</div>
+  <div class="callout tradeoff">
+    <span class="kicker">Tradeoff · determinism</span>
+    A deterministic <code>f</code> is predictable and replayable — but a world of pure clockwork is dull. The same inputs always give the same future. We'll want a controlled way to let things surprise us.
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="step" id="s3">
+  <div class="stepnum">Step 3</div>
+  <h2>Chance: transitions become probabilistic</h2>
+  <p class="lead">Let <code>f</code> draw on a source of randomness. The next state is now a <b>sample</b>, not a fixed value.</p>
+  <div class="formula">state<sub>t+1</sub> &nbsp;~&nbsp; f(state<sub>t</sub>, randomness)</div>
+  <p>This is where richness enters. A defender contesting a ball should <i>sometimes</i> steal it — not always, not never. Probability is what turns rules into <i>games</i>.</p>
+  <div class="callout decide">
+    <span class="kicker">Decision · how randomness is expressed</span>
+    Inject an RNG and let <code>f</code> sample and return <i>one</i> next state — rather than returning an explicit distribution. It's the minimal, fully general choice (explicit distributions are a special case you can build on top). Seed it per <span class="pill">object, tick</span> so runs stay exactly replayable.
+  </div>
+  <p class="muted">Determinism didn't disappear — it moved up a level. Fix the seed and the whole stochastic world replays bit-for-bit.</p>
+</section>
+
+<!-- 4 -->
+<section class="step" id="s4">
+  <div class="stepnum">Step 4</div>
+  <h2>Relationships: objects read each other</h2>
+  <p class="lead">A lone object is an island. Connect them: a directed edge <code>X → Y</code> means <b>X reads Y's state</b> when it transitions. An object's out-neighbors are the slice of the universe it can perceive.</p>
+  <div class="formula">state<sub>t+1</sub> &nbsp;~&nbsp; f( state<sub>t</sub>, [ states of out-neighbors ], randomness )</div>
+  <svg width="420" height="220" viewBox="0 0 420 220" role="img" aria-label="A small directed graph of objects">
+    <defs><marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#9aa7b4"/></marker></defs>
+    <g stroke="#3a4554" stroke-width="1.8" marker-end="url(#arr2)" fill="none">
+      <line x1="210" y1="55" x2="120" y2="120"/>
+      <line x1="210" y1="55" x2="300" y2="120"/>
+      <line x1="120" y1="135" x2="200" y2="175"/>
+    </g>
+    <g text-anchor="middle" font-family="monospace" font-size="12">
+      <circle cx="210" cy="45" r="26" fill="#1c2230" stroke="#7ee787" stroke-width="1.6"/><text x="210" y="49" fill="#e6edf3">A</text>
+      <circle cx="110" cy="130" r="26" fill="#1c2230" stroke="#2d3643"/><text x="110" y="134" fill="#e6edf3">B</text>
+      <circle cx="310" cy="130" r="26" fill="#1c2230" stroke="#2d3643"/><text x="310" y="134" fill="#e6edf3">C</text>
+      <circle cx="210" cy="185" r="26" fill="#1c2230" stroke="#2d3643"/><text x="210" y="189" fill="#e6edf3">D</text>
+    </g>
+    <text x="210" y="212" text-anchor="middle" font-family="monospace" font-size="11" fill="#9aa7b4">A reads B and C; B reads D</text>
+  </svg>
+  <div class="figcap">The universe is a directed graph. Perception is <i>local</i> — each object sees only what it points at.</div>
+  <div class="callout tradeoff">
+    <span class="kicker">Tradeoff · how densely to connect</span>
+    Let everything read everything (<b>all-to-all</b>) and the rules are trivial — but the graph becomes meaningless (every model is the complete graph), every transition must chew through the entire universe, and there's no locality for structure or "space" to emerge from. Keeping edges a <b>chosen subset</b> preserves locality at the cost of one new question: <i>how does an object decide what to read?</i> (We answer that in Step 8.)
+  </div>
+  <div class="callout aha">
+    <span class="kicker">Aside · is this just a population protocol?</span>
+    Close, but strictly richer. Population protocols are <b>finite-state</b> — constant memory regardless of population size — which caps them at the semilinear predicates. Our objects carry <b>unbounded</b> state and arbitrary transition functions. The finiteness is the gap; their elegant theory is the price of the constraint we're not taking.
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="step" id="s5">
+  <div class="stepnum">Step 5</div>
+  <h2>Synchrony: everyone steps together</h2>
+  <p class="lead">If A reads B while B is mid-update, the result depends on <i>who went first</i>. To keep "next state is a function of the <b>previous</b> state" honest, we <b>double-buffer</b>: every object reads generation <i>t</i>, every object writes generation <i>t+1</i>, then we swap.</p>
+  <svg width="540" height="150" viewBox="0 0 540 150" role="img" aria-label="Double buffered update">
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <text x="120" y="22" fill="#79c0ff">generation t  (read-only)</text>
+      <text x="420" y="22" fill="#7ee787">generation t+1 (written)</text>
+      <rect x="40"  y="40" width="70" height="34" rx="7" fill="#0a0e14" stroke="#2d3643"/><text x="75"  y="62" fill="#e6edf3">A:3</text>
+      <rect x="130" y="40" width="70" height="34" rx="7" fill="#0a0e14" stroke="#2d3643"/><text x="165" y="62" fill="#e6edf3">B:7</text>
+      <rect x="340" y="40" width="70" height="34" rx="7" fill="#161b22" stroke="#7ee787"/><text x="375" y="62" fill="#e6edf3">A:10</text>
+      <rect x="430" y="40" width="70" height="34" rx="7" fill="#161b22" stroke="#7ee787"/><text x="465" y="62" fill="#e6edf3">B:3</text>
+    </g>
+    <g stroke="#3a4554" stroke-width="1.6" marker-end="url(#arr)" fill="none">
+      <path d="M210 57 H330"/>
+    </g>
+    <text x="270" y="50" text-anchor="middle" font-family="monospace" font-size="11" fill="#9aa7b4">all f's run on t</text>
+    <text x="270" y="112" text-anchor="middle" font-family="monospace" font-size="11.5" fill="#9aa7b4">no object ever sees a half-updated world</text>
+  </svg>
+  <div class="callout aha">
+    <span class="kicker">Consequence · a speed limit for causality</span>
+    Because a change is only visible the <i>next</i> tick, influence spreads at most one edge-hop per tick — a built-in "light cone." That's exactly what lets distance, and eventually <b>space</b>, emerge from the graph instead of being hard-coded.
+  </div>
+  <h3>But agents are slow…</h3>
+  <p>A cheap Python object transitions in microseconds; an LLM-driven one can take 30 seconds. Rather than make the clock wait, treat <b>how long a transition takes as itself a sample from a distribution</b> — a fast object's delay distribution is a spike (acts every tick), an LLM's is broad (acts rarely). The read/write discipline stays synchronous; the <i>cadence</i> rides on top, stochastic and per-object.</p>
+  <div class="callout decide">
+    <span class="kicker">Decision · timing is part of the dynamics</span>
+    Not a latency bug to patch — a feature. Deliberation-vs-reflex becomes observable, and neighbors ticking on their own clocks make the world jump in ways you can't predict from your own steps. (That "unexplained change" is something we'll <i>want</i> in Step 8.)
+  </div>
+</section>
+
+<!-- BASKETBALL SIM -->
+<section class="step" id="sim">
+  <div class="stepnum">Interlude</div>
+  <h2>See it: a game from pointers + chance</h2>
+  <p class="lead">Everything so far — local, stochastic, synchronous transitions — is already enough to build a game. Here a <b>ball</b> object holds a pointer to its current owner; each tick it may be passed, and a contesting defender has <i>some probability</i> of a steal. No special "game engine" — just objects reading objects.</p>
+  <div class="sim">
+    <h4>🏀 Possession simulator</h4>
+    <p class="muted" style="margin:4px 0 0;font-size:14px">The ball's state is essentially <code>{holder, mode, target}</code>. Its <code>f</code> samples what happens next from the players it reads.</p>
+    <svg id="court" width="420" height="300" viewBox="0 0 420 300"></svg>
+    <div class="controls">
+      <button id="tickBtn">Tick ▸</button>
+      <button id="playBtn" class="ghost">Auto-play</button>
+      <button id="resetBtn" class="ghost">Reset</button>
+      <label class="switch"><input type="checkbox" id="stoch" checked /> stochastic (uncheck for clockwork)</label>
+    </div>
+    <div class="stat">tick <b id="tval">0</b> · possessions <b id="pval">0</b> · steals <b id="sval">0</b> · baskets <b id="bval">0</b></div>
+    <div id="log"></div>
+  </div>
+  <div class="callout tradeoff">
+    <span class="kicker">Tradeoff · feel the determinism cliff</span>
+    Untick "stochastic" and watch the game collapse into a lifeless cycle — the ball just circles. Chance isn't decoration; it's the source of contestation, surprise, and anything worth calling play.
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="step" id="s6">
+  <div class="stepnum">Step 6</div>
+  <h2>Growth: the graph can change itself</h2>
+  <p class="lead">A fixed graph can't model an open world — players join, things break, matter decomposes into new matter. So a transition may emit <b>structural effects</b> beyond its next state: <code>create</code> a new object, <code>rewire</code> its own edges, and maybe <code>destroy</code>.</p>
+  <p>But before adding a primitive, we ask one disciplined question:</p>
+  <div class="callout decide">
+    <span class="kicker">The design law</span>
+    A capability earns a place in the substrate <b>only if it strictly enlarges the set of expressible worlds.</b> If agents can already build it from state + transitions, it stays out — let them discover it.
+  </div>
+  <table>
+    <tr><th>Capability</th><th>Already emergent?</th><th>Verdict</th></tr>
+    <tr><td>Object <b>creation</b></td><td class="no">No — a vertex can't spawn a vertex</td><td class="yes">Primitive</td></tr>
+    <tr><td>Interaction / messaging</td><td class="yes">Yes — point at me, react to my state</td><td class="muted">Emergent</td></tr>
+    <tr><td>A "dead" / inert thing</td><td class="yes">Yes — a terminal state mapping to itself</td><td class="muted">Emergent</td></tr>
+    <tr><td>Rotting / decomposition</td><td class="yes">Yes — decay into a state that spawns simpler objects</td><td class="muted">Emergent</td></tr>
+    <tr><td>Object <b>destruction</b></td><td class="yes">Behavior: yes. Reclaiming the vertex: no</td><td class="warn">Deferred</td></tr>
+  </table>
+  <div class="callout aha">
+    <span class="kicker">The key asymmetry</span>
+    <b>Creation is irreducible; destruction is not.</b> A terminal "dead/decomposed" state reproduces everything death <i>does</i> — destruction would only reclaim a vertex's compute. So creation goes in now; destruction waits until vertex accumulation is a real cost. Maximize scope, minimize rules.
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="step" id="s7">
+  <div class="stepnum">Step 7</div>
+  <h2>Minds: an agent is just an object</h2>
+  <p class="lead">Here's the payoff. An <b>agent</b> is an object whose transition function happens to be an <b>LLM</b> (with its own private memory and slow, noisy thinking). It gets no special powers — same state, same edges, same primitives as a ball or a hoop. The only difference is what's inside <code>f</code>.</p>
+  <p>The substrate literally has <b>no notion of "agent"</b> to expose — it can't see inside <code>f</code>. An agent's only effectors are the universal ones: <b>write my own state</b> (everything downstream perceives me through it) and <b>emit structural effects</b>.</p>
+  <div class="callout aha">
+    <span class="kicker">The invariant the whole design rests on</span>
+    <b>Observation is unilateral; influence is consensual.</b><br/>
+    Reading X affects only <i>you</i> — X's state flows into <i>your</i> transition, and X is never told. So anyone may watch anyone, silently. But X is influenced only by what <i>X</i> reads — so to affect you, something must point at you, which only <i>it</i> controls. Nobody can push to you; they can only be watched by you.
+  </div>
+  <svg width="480" height="170" viewBox="0 0 480 170" role="img" aria-label="Observation versus influence">
+    <defs><marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#7ee787"/></marker></defs>
+    <g text-anchor="middle" font-family="monospace" font-size="12">
+      <circle cx="90" cy="85" r="30" fill="#1c2230" stroke="#7ee787" stroke-width="1.6"/><text x="90" y="89" fill="#e6edf3">A</text>
+      <circle cx="300" cy="85" r="30" fill="#1c2230" stroke="#2d3643"/><text x="300" y="89" fill="#e6edf3">B</text>
+    </g>
+    <line x1="122" y1="85" x2="266" y2="85" stroke="#7ee787" stroke-width="2" marker-end="url(#arrG)"/>
+    <text x="196" y="72" text-anchor="middle" font-family="monospace" font-size="11" fill="#7ee787">A reads B</text>
+    <text x="196" y="108" text-anchor="middle" font-family="monospace" font-size="11" fill="#9aa7b4">B is unaffected &amp; unaware</text>
+    <text x="300" y="150" text-anchor="middle" font-family="monospace" font-size="11" fill="#9aa7b4">for B to be influenced, B must add B → A</text>
+  </svg>
+  <div class="callout aha">
+    <span class="kicker">What this buys</span>
+    No "who exists" list to leak; partial observability falls out of locality; and whether an object is a <i>mind</i> is something you must <b>infer from behavior</b> — a Turing test baked into the substrate.
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="step" id="s8">
+  <div class="stepnum">Step 8</div>
+  <h2>Discovery: finding what you can't be told about</h2>
+  <p class="lead">Step 4 left a question: how does an object decide what to read? And Step 7 raised the stakes — there's no directory of agents, on purpose. A fresh object must <b>discover</b> the world, not be handed it.</p>
+  <h3>The hub</h3>
+  <p>One distinguished object, the <b>hub</b>, holds a <b>ledger of handles</b> — bare, opaque IDs for the vertices that exist. On creation, the substrate wires <i>only</i> <code>hub ↔ V</code>. So every object can read the ledger from birth, and the ledger lists every newcomer one tick after it appears.</p>
+  <svg width="460" height="210" viewBox="0 0 460 210" role="img" aria-label="The hub and its ledger">
+    <defs><marker id="arrH" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#79c0ff"/></marker></defs>
+    <g stroke="#3a4554" stroke-width="1.5" fill="none" marker-end="url(#arrH)">
+      <line x1="230" y1="78" x2="95"  y2="150"/><line x1="95"  y1="150" x2="225" y2="92"/>
+      <line x1="230" y1="78" x2="230" y2="150"/><line x1="230" y1="150" x2="230" y2="92"/>
+      <line x1="230" y1="78" x2="365" y2="150"/><line x1="365" y1="150" x2="235" y2="92"/>
+    </g>
+    <g text-anchor="middle" font-family="monospace" font-size="12">
+      <rect x="160" y="34" width="140" height="46" rx="10" fill="#0a0e14" stroke="#79c0ff" stroke-width="1.6"/>
+      <text x="230" y="54" fill="#e6edf3">HUB · ledger</text>
+      <text x="230" y="70" fill="#9aa7b4" font-size="10">[ 0x9f, 0x12, 0xaa ]</text>
+      <circle cx="80"  cy="165" r="24" fill="#1c2230" stroke="#2d3643"/><text x="80"  y="169" fill="#e6edf3">0x9f</text>
+      <circle cx="230" cy="165" r="24" fill="#1c2230" stroke="#2d3643"/><text x="230" y="169" fill="#e6edf3">0x12</text>
+      <circle cx="380" cy="165" r="24" fill="#1c2230" stroke="#2d3643"/><text x="380" y="169" fill="#e6edf3">0xaa</text>
+    </g>
+  </svg>
+  <div class="figcap">A handle reveals <i>existence, not nature</i> — that something is there, not what it is.</div>
+  <h3>Edge dynamics, made un-messy</h3>
+  <p>Beyond the hub edge, every connection is an <code>attach</code>/<code>detach</code> effect an object emits against a handle it read. The rule that keeps this clean: <b>an object may edit only its own out-edges.</b> You never add an edge <i>into</i> yourself, never touch anyone else's. Each object exclusively owns what it reads — so there are no shared, contended, or racing edges anywhere.</p>
+  <div class="callout decide">
+    <span class="kicker">Decision · graduated, earned discovery</span>
+    Read the hub → see handles you <i>didn't create</i> → infer other creators exist. Spend an out-edge to read one → learn what it <i>is</i>. Watch it over time → infer whether it's a <i>mind</i>. Other agents are never announced; every bit of knowledge is earned. Handles stay <b>fully opaque</b> — the strongest hidden-minds setting.
+  </div>
+  <div class="callout tradeoff">
+    <span class="kicker">Tradeoff · mystery vs. coordination</span>
+    Opaque handles maximize the discovery game but make deliberate cooperation hard — you can't address "the marketplace," only <code>0x9f</code>. Fallback dials (opaque-but-noisy, or handle+label) <i>reduce</i> mystery, so we start maximal and loosen only if coordination proves impossible.
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="step" id="s9">
+  <div class="stepnum">Step 9</div>
+  <h2>The engine: one contract, many models</h2>
+  <p class="lead">We've been quietly making <i>policy</i> choices — synchronous updates, the <code>hub ↔ V</code> wiring, full neighbor views. To experiment with other computational models, separate the invariant <b>contract</b> from the swappable <b>policies</b>.</p>
+  <div class="card">
+    <h3 style="margin-top:0">Fixed contract — every engine</h3>
+    <p class="muted" style="margin:6px 0">objects with state · directed edges · discrete ticks · sandboxed transition calls · double-buffered read→write · seeded RNG · structural effects applied end-of-tick.</p>
+    <h3>Pluggable policies — a subclass = a choice of these</h3>
+    <table style="margin:8px 0 0">
+      <tr><th>Policy</th><th>Options</th></tr>
+      <tr><td>Activation / scheduling</td><td class="muted">all synchronously · random subset (population-protocol) · per-object stochastic cadence</td></tr>
+      <tr><td>Neighbor view</td><td class="muted">full state · noisy · aggregated</td></tr>
+      <tr><td>Connection meta-transition</td><td class="muted"><code>hub ↔ V</code> · all-to-all · creator-only</td></tr>
+      <tr><td>Structural-effect timing</td><td class="muted">end of tick (default) · …</td></tr>
+      <tr><td>RNG / seeding</td><td class="muted">per (object, tick)</td></tr>
+    </table>
+  </div>
+  <p>So a model is a thin subclass — <code>SynchronousCA</code>, <code>PopulationProtocol</code>, <code>AsyncStochastic</code> — over the same world. Swapping the computational model is swapping policies, not rewriting the universe.</p>
+  <div class="callout aha">
+    <span class="kicker">The whole thing, in one breath</span>
+    A universe is a graph of stateful objects, each advancing by a local, stochastic, synchronous function of what it chooses to read. Creation grows it; opaque handles let minds find each other without being told; and agents are simply objects whose function is a mind. One thing, one rule — everything else emerges.
+  </div>
+</section>
+
+<div class="footer">
+  <p>Companion to <code>docs/UNIVERSE.md</code> — the canonical spec. This page is a teaching pass over the same design.</p>
+</div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var SVGNS="http://www.w3.org/2000/svg";
+  var court=document.getElementById("court");
+  if(!court) return;
+  var N=5, cx=210, cy=150, R=110;
+  var pos=[];
+  for(var i=0;i<N;i++){ var a=i*2*Math.PI/N - Math.PI/2; pos.push({x:cx+R*Math.cos(a), y:cy+R*Math.sin(a)}); }
+  var hoop={x:cx, y:30};
+
+  var state, tick, possessions, steals, baskets, playing=null;
+  var logEl=document.getElementById("log");
+  function reset(){
+    state={holder:0, mode:"held", target:null};
+    tick=0; possessions=0; steals=0; baskets=0;
+    logEl.textContent="";
+    log("Tip-off. P1 has the ball.");
+    render(); stats();
+  }
+  function log(s){ logEl.textContent += (tick? "["+tick+"] ":"") + s + "\n"; logEl.scrollTop=logEl.scrollHeight; }
+  function stats(){
+    document.getElementById("tval").textContent=tick;
+    document.getElementById("pval").textContent=possessions;
+    document.getElementById("sval").textContent=steals;
+    document.getElementById("bval").textContent=baskets;
+  }
+  function rnd(){ return Math.random(); }
+  var stochEl=document.getElementById("stoch");
+
+  // The ball's transition function f(state, players, rng) -> next state
+  function step(){
+    tick++;
+    var stoch=stochEl.checked;
+    if(state.mode==="held"){
+      var h=state.holder;
+      // chance to shoot
+      var shoot = stoch ? rnd()<0.18 : false;
+      if(shoot){
+        var made = stoch ? rnd()<0.5 : true;
+        if(made){ baskets++; log("P"+(h+1)+" shoots… and scores! 🏀"); state={holder:(h+1)%N,mode:"held",target:null}; possessions++; }
+        else { log("P"+(h+1)+" shoots… miss. Rebound to P"+(((h+2)%N)+1)+"."); state={holder:(h+2)%N,mode:"held",target:null}; possessions++; }
+      } else {
+        // pass: deterministic = next player; stochastic = random other
+        var tgt;
+        if(stoch){ do{ tgt=Math.floor(rnd()*N); }while(tgt===h); }
+        else { tgt=(h+1)%N; }
+        state={holder:h, mode:"passing", target:tgt};
+        log("P"+(h+1)+" passes toward P"+(tgt+1)+"…");
+      }
+    } else { // passing -> resolve
+      var from=state.holder, to=state.target;
+      var stolen=false, by=null;
+      if(stoch){
+        // each other player has a small steal chance
+        for(var k=0;k<N;k++){ if(k!==from && k!==to && rnd()<0.12){ stolen=true; by=k; break; } }
+        if(!stolen && rnd()<0.10){ stolen=true; by=to===((from+1)%N)?(from+2)%N:(from+1)%N; } // deflection
+      }
+      if(stolen){ steals++; possessions++; log("Intercepted by P"+(by+1)+"! 🪤"); state={holder:by,mode:"held",target:null}; }
+      else { possessions++; log("P"+(to+1)+" receives."); state={holder:to,mode:"held",target:null}; }
+    }
+    render(); stats();
+  }
+
+  function el(tag,attrs){ var e=document.createElementNS(SVGNS,tag); for(var k in attrs){ e.setAttribute(k,attrs[k]); } return e; }
+  function render(){
+    while(court.firstChild) court.removeChild(court.firstChild);
+    // hoop
+    court.appendChild(el("rect",{x:hoop.x-26,y:hoop.y-12,width:52,height:24,rx:6,fill:"#161b22",stroke:"#f0b86e","stroke-width":1.6}));
+    var ht=el("text",{x:hoop.x,y:hoop.y+5,"text-anchor":"middle","font-family":"monospace","font-size":12,fill:"#f0b86e"}); ht.textContent="HOOP"; court.appendChild(ht);
+    // pass arrow
+    if(state.mode==="passing"){
+      var a=pos[state.holder], b=pos[state.target];
+      court.appendChild(el("line",{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:"#79c0ff","stroke-width":2,"stroke-dasharray":"5 4"}));
+    }
+    // players
+    for(var i=0;i<N;i++){
+      var p=pos[i], owns=(state.holder===i && state.mode==="held"), src=(state.holder===i && state.mode==="passing");
+      court.appendChild(el("circle",{cx:p.x,cy:p.y,r:24,fill:owns?"#13351f":"#1c2230",stroke:owns?"#7ee787":(src?"#79c0ff":"#2d3643"),"stroke-width":owns||src?2:1.4}));
+      var t=el("text",{x:p.x,y:p.y+5,"text-anchor":"middle","font-family":"monospace","font-size":13,fill:"#e6edf3"}); t.textContent="P"+(i+1); court.appendChild(t);
+    }
+    // ball
+    var bp;
+    if(state.mode==="held"){ var h=pos[state.holder]; bp={x:h.x+20,y:h.y-20}; }
+    else { var a2=pos[state.holder], b2=pos[state.target]; bp={x:(a2.x+b2.x)/2,y:(a2.y+b2.y)/2}; }
+    court.appendChild(el("circle",{cx:bp.x,cy:bp.y,r:8,fill:"#f0883e",stroke:"#0d1117","stroke-width":1.5}));
+  }
+
+  document.getElementById("tickBtn").onclick=step;
+  document.getElementById("resetBtn").onclick=function(){ stopPlay(); reset(); };
+  function stopPlay(){ if(playing){ clearInterval(playing); playing=null; document.getElementById("playBtn").textContent="Auto-play"; } }
+  document.getElementById("playBtn").onclick=function(){
+    if(playing){ stopPlay(); }
+    else { this.textContent="Pause"; playing=setInterval(step,900); }
+  };
+  reset();
+})();
+</script>
+</body>
+</html>
