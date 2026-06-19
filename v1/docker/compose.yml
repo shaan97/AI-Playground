@@ -1,0 +1,17 @@
+services:
+  sandbox:
+    build: .
+    container_name: agent-sandbox
+    network_mode: none        # no internet — the whole point
+    mem_limit: 512m
+    memswap_limit: 512m       # disable swap
+    cpus: 1.0
+    pids_limit: 200
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - sandbox-workspace:/workspace
+    restart: "no"
+
+volumes:
+  sandbox-workspace:

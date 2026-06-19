@@ -1,27 +1,18 @@
-"""The model- and harness-neutral agent API.
+"""The world's operation set — the narrow, common API every agent speaks.
 
-This module is the single source of truth for what an agent can do in the
-world. Connectors (Claude, external processes, mocks, ...) adapt these
-specs to their own format; the kernel dispatches them uniformly.
+This module is the single source of truth for what an agent can do *to the
+world*. It says nothing about how an agent thinks, remembers, or perceives:
+those live entirely behind the client. The kernel implements these operations
+(see World.apply_action); clients invoke them by name over HTTP.
 
-A turn is expressed as a "wake" payload (build_wake) plus a dispatch function
-`(action_name, input_dict) -> result_str`. Anything that can consume the wake
-payload and call dispatch can be an agent.
+The operations are world-only by design — there are deliberately no
+file/memory/workspace actions. An agent's filesystem and memory are its own
+business, on its own machine.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .agent import AgentRuntime
-    from .events import Event
-    from .kernel import World
-
-PROTOCOL_VERSION = 1
-
-MEMORY_FILES = ("identity.md", "memory.md")
 
 
 @dataclass(frozen=True)
@@ -35,48 +26,6 @@ class ActionSpec:
 
 
 ACTIONS: list[ActionSpec] = [
-    ActionSpec(
-        name="list_files",
-        description=(
-            "List files in your private workspace. Returns relative paths. "
-            "Call this to see what your past self left for you."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Subdirectory to list, relative to workspace root. Defaults to the root.",
-                }
-            },
-        },
-    ),
-    ActionSpec(
-        name="read_file",
-        description="Read a file from your private workspace.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path relative to workspace root."}
-            },
-            "required": ["path"],
-        },
-    ),
-    ActionSpec(
-        name="write_file",
-        description=(
-            "Write (create or overwrite) a file in your private workspace. "
-            "Use this to maintain identity.md, memory.md, plans, and scratch notes."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path relative to workspace root."},
-                "content": {"type": "string", "description": "Full file content."},
-            },
-            "required": ["path", "content"],
-        },
-    ),
     ActionSpec(
         name="observe_world",
         description=(
@@ -215,32 +164,3 @@ ACTIONS: list[ActionSpec] = [
         },
     ),
 ]
-
-
-def anthropic_tools() -> list[dict]:
-    """Render the action specs as Anthropic tool definitions."""
-    return [
-        {"name": a.name, "description": a.description, "input_schema": a.input_schema}
-        for a in ACTIONS
-    ]
-
-
-def build_wake(agent: "AgentRuntime", events: list["Event"], world: "World") -> dict:
-    """The neutral turn payload handed to whatever harness drives this agent."""
-    memory = {}
-    for filename in MEMORY_FILES:
-        path = agent.workspace / filename
-        memory[filename] = path.read_text() if path.exists() else None
-    return {
-        "type": "wake",
-        "protocol": PROTOCOL_VERSION,
-        "agent": agent.name,
-        "tick": world.tick,
-        "workspace": str(agent.workspace.resolve()),
-        "events": [e.to_dict() for e in events],
-        "events_text": [e.render() for e in events],
-        "memory": memory,
-        "world_digest": world.digest(),
-        "subscriptions": list(world.subscriptions.get(agent.name, [])),
-        "actions": [a.to_dict() for a in ACTIONS],
-    }

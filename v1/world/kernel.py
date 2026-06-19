@@ -5,11 +5,17 @@ agents, objects, and events — nothing else. Geography, physics, economies,
 institutions: if the world is to have them, the agents must build them out
 of objects and conventions.
 
-Time is decoupled from agency: `advance_tick()` is the world's heartbeat
-(objects act, a tick event is broadcast), while agents may be driven either
-in lockstep (`step()`/`run()`, local mode) or at their own pace by remote
-clients (server mode — see world/server.py), which read their inboxes with
-cursors and acknowledge what they've consumed.
+The kernel is a pure server-side core: it holds shared world state and
+implements the agent-facing operations (`apply_action`), but knows nothing
+about how an agent thinks, what model drives it, or how it remembers. Agents
+are opaque clients that join via `register()` and reach the world only through
+the operation set in world/protocol.py. An agent's filesystem, memory, and
+compute live entirely on its own machine and are invisible here.
+
+Time is the world's own: `advance_tick()` is the heartbeat (objects act, a
+tick event is broadcast). Agents are never scheduled by the kernel — they
+connect when they like, read their inbox with a cursor, and acknowledge what
+they have consumed (see world/server.py).
 
 Event routing rule: events addressed to a specific agent are ALWAYS
 delivered; broadcast events are delivered only to agents subscribed to that
@@ -21,7 +27,6 @@ inspected with ordinary file tools, and resumed:
 
     <root>/
         meta.json               # tick/seq counters, roster, subscriptions, inboxes
-        agents/<name>/workspace # each agent's private filesystem
         objects/<name>/         # world objects (manifest/state/behavior)
         log/events.jsonl        # append-only log of everything that happened
 """
@@ -32,7 +37,6 @@ import json
 import re
 from pathlib import Path
 
-from .agent import AgentRuntime
 from .events import GENESIS, MESSAGE, OBJECT, SYSTEM, TICK, Event
 from .objects import WorldObject
 
@@ -40,16 +44,28 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 EVENT_KINDS = [GENESIS, TICK, MESSAGE, OBJECT, SYSTEM]
 MAX_INBOX = 1000
+MAX_RESULT_CHARS = 8000
 
-GENESIS_TEXT = (
-    "The world is empty. You are one of {n} agents: {names}. Nothing exists yet "
-    "except you, the other agents, and the clock. What this world becomes — its "
-    "shape, its contents, its rules — is up to all of you to decide together."
+# Names handed out when an agent registers without requesting one.
+_NAME_POOL = ["aria", "bram", "cleo", "dex", "echo", "fern", "gale", "hugo"]
+
+WELCOME_TEXT = (
+    "You have entered the world as '{name}'. {population} What this world "
+    "becomes — its shape, its contents, its rules — is up to all of you to "
+    "decide together."
 )
 
 
+class NameTaken(Exception):
+    """Raised by register() when the requested name is already in use."""
+
+
+class InvalidName(Exception):
+    """Raised by register() when the requested name is malformed."""
+
+
 class World:
-    def __init__(self, root: Path, connector_factory, agent_names: list[str], quiet: bool = False):
+    def __init__(self, root: Path, quiet: bool = False):
         self.root = Path(root)
         self.quiet = quiet
         (self.root / "objects").mkdir(parents=True, exist_ok=True)
@@ -62,31 +78,25 @@ class World:
             meta = json.loads(meta_path.read_text())
             self.tick: int = meta["tick"]
             self.seq: int = meta.get("seq", 0)
-            agent_names = meta["agents"]  # roster is fixed for a world's lifetime
+            agent_names = meta.get("agents", [])
             saved_inboxes = meta.get("inboxes", {})
             saved_subs = meta.get("subscriptions", {})
-            self._genesis_done = meta.get("genesis_done", True)
         else:
             self.tick = 0
             self.seq = 0
-            self._genesis_done = False
+            agent_names = []
 
-        self.agents: dict[str, AgentRuntime] = {
-            name: AgentRuntime(
-                name=name,
-                workspace=self.root / "agents" / name / "workspace",
-                connector=connector_factory(index, name),
-                world=self,
-            )
-            for index, name in enumerate(agent_names)
-        }
+        # The roster is just a list of names; everything an agent "is" to the
+        # world is its inbox + subscriptions. There is no per-agent runtime,
+        # workspace, or brain on this side of the boundary.
+        self.agents: list[str] = list(agent_names)
         self.objects: dict[str, WorldObject] = {
             path.name: WorldObject(path)
             for path in sorted((self.root / "objects").iterdir())
             if (path / "manifest.json").exists()
         }
-        # Undelivered events survive across runs, so nothing said on a run's
-        # final tick (or while a remote agent was offline) is lost.
+        # Undelivered events survive across runs, so nothing said while an
+        # agent was offline is lost.
         self.inboxes: dict[str, list[Event]] = {
             name: [Event(**e) for e in saved_inboxes.get(name, [])] for name in self.agents
         }
@@ -104,7 +114,6 @@ class World:
                     "tick": self.tick,
                     "seq": self.seq,
                     "agents": list(self.agents),
-                    "genesis_done": self._genesis_done,
                     "subscriptions": self.subscriptions,
                     "inboxes": {
                         name: [e.to_dict() for e in events]
@@ -122,6 +131,54 @@ class World:
     def _say(self, text: str) -> None:
         if not self.quiet:
             print(text, flush=True)
+
+    # -------------------------------------------------------------- roster
+
+    def _assign_name(self) -> str:
+        for name in _NAME_POOL:
+            if name not in self.agents:
+                return name
+        i = len(self.agents)
+        while f"agent-{i}" in self.agents:
+            i += 1
+        return f"agent-{i}"
+
+    def register(self, name: str | None = None) -> str:
+        """Admit a new agent to the world. Returns the name actually assigned.
+
+        Open by design: any client may claim an identity. Names are unique for
+        the world's lifetime. Raises InvalidName / NameTaken on rejection.
+        """
+        if not name:
+            name = self._assign_name()
+        if not _NAME_RE.match(name):
+            raise InvalidName(f"invalid agent name {name!r} (use lowercase letters, digits, '-', '_')")
+        if name in self.agents:
+            raise NameTaken(f"agent name {name!r} is already taken")
+        self.agents.append(name)
+        self.inboxes[name] = []
+        self.subscriptions[name] = list(EVENT_KINDS)
+        self._log({"kind": "registered", "tick": self.tick, "agent": name})
+        self._say(f"  [world] '{name}' joined the world")
+        self.welcome(name)
+        self._save_meta()
+        return name
+
+    def welcome(self, name: str) -> None:
+        """Greet a newcomer (direct) and announce them to everyone else."""
+        others = [a for a in self.agents if a != name]
+        population = (
+            "You are the first agent here."
+            if not others
+            else f"Other agents already here: {', '.join(others)}."
+        )
+        text = WELCOME_TEXT.format(name=name, population=population)
+        self.publish(Event(kind=GENESIS, tick=self.tick, source="world", to=name, payload={"text": text}))
+        if others:
+            self.publish(Event(
+                kind=SYSTEM, tick=self.tick, source="world", to="all",
+                payload={"text": f"A new agent, '{name}', has entered the world."},
+            ))
 
     # ----------------------------------------------------------------- events
 
@@ -153,21 +210,8 @@ class World:
             self._log({"kind": "inbox_overflow", "agent": name, "dropped": dropped})
 
     def ack(self, name: str, cursor: int) -> None:
-        """Consume an agent's inbox up to (and including) `cursor`. Used by
-        remote clients; lockstep mode consumes inboxes wholesale instead."""
+        """Consume an agent's inbox up to (and including) `cursor`."""
         self.inboxes[name] = [e for e in self.inboxes[name] if e.seq > cursor]
-        self._save_meta()
-
-    # -------------------------------------------------------------- main loop
-
-    def ensure_genesis(self) -> None:
-        if self._genesis_done:
-            return
-        text = GENESIS_TEXT.format(n=len(self.agents), names=", ".join(self.agents))
-        self._say(f"=== genesis: {len(self.agents)} agents enter an empty world ===")
-        for name in self.agents:
-            self.publish(Event(kind=GENESIS, tick=0, source="world", to=name, payload={"text": text}))
-        self._genesis_done = True
         self._save_meta()
 
     def inject(self, text: str, to: str = "all") -> None:
@@ -180,10 +224,11 @@ class World:
         self._save_meta()
         self._say(f"  [world -> {to}] {text}")
 
+    # -------------------------------------------------------------- heartbeat
+
     def advance_tick(self) -> None:
         """One heartbeat: objects act, then the tick is broadcast. Does not
-        schedule agents — lockstep mode does that in step(); in server mode
-        agents are remote clients acting on their own cadence."""
+        schedule agents — they are remote clients acting on their own cadence."""
         self.tick += 1
         self._say(f"\n=== tick {self.tick} ===")
         snapshot = self.snapshot()
@@ -192,23 +237,6 @@ class World:
                 self._say(f"  {event.render()}")
                 self.publish(event)
         self.publish(Event(kind=TICK, tick=self.tick, source="world", to="all"))
-        self._save_meta()
-
-    def run(self, ticks: int) -> None:
-        """Lockstep mode: heartbeat + every agent takes a turn, each tick."""
-        self.ensure_genesis()
-        for _ in range(ticks):
-            self.step()
-
-    def step(self) -> None:
-        self.advance_tick()
-        for name, agent in self.agents.items():
-            inbox = self.inboxes[name]
-            self.inboxes[name] = []
-            if not inbox:
-                continue  # nothing to perceive (e.g. unsubscribed from ticks)
-            note = agent.take_turn(inbox)
-            self.record_turn(name, note)
         self._save_meta()
 
     def record_turn(self, name: str, note: str) -> None:
@@ -231,7 +259,7 @@ class World:
     def digest(self) -> str:
         lines = [
             f"tick: {self.tick}",
-            f"agents: {', '.join(self.agents)}",
+            f"agents: {', '.join(self.agents) or '(none yet)'}",
             f"objects ({len(self.objects)}):",
         ]
         if not self.objects:
@@ -245,7 +273,52 @@ class World:
             lines.append(f"    state: {state_preview}")
         return "\n".join(lines)
 
-    # ------------------------------------------------------- agent-facing API
+    # ------------------------------------------------------- agent operations
+
+    def apply_action(self, actor: str, action_name: str, action_input: dict) -> str:
+        """Execute one world operation on behalf of `actor`. Never raises —
+        errors come back as `error:`-prefixed strings. This is the single
+        server-side entry point for everything an agent can do to the world."""
+        try:
+            result = self._apply(actor, action_name, action_input)
+        except Exception as exc:
+            return f"error: {exc!r}"
+        if len(result) > MAX_RESULT_CHARS:
+            result = result[:MAX_RESULT_CHARS] + "\n... (truncated)"
+        return result
+
+    def _apply(self, actor: str, action_name: str, action_input: dict) -> str:
+        if action_name == "observe_world":
+            return self.digest()
+        if action_name == "inspect_object":
+            return self.inspect_object(action_input["name"])
+        if action_name == "create_object":
+            return self.create_object(
+                creator=actor,
+                name=action_input["name"],
+                description=action_input["description"],
+                state=action_input.get("state"),
+                behavior_code=action_input.get("behavior_code"),
+            )
+        if action_name == "update_object":
+            return self.update_object(
+                actor=actor,
+                name=action_input["name"],
+                description=action_input.get("description"),
+                state=action_input.get("state"),
+                behavior_code=action_input.get("behavior_code"),
+            )
+        if action_name == "interact_with_object":
+            return self.interact_with_object(
+                actor=actor,
+                name=action_input["name"],
+                action=action_input.get("action", {}),
+            )
+        if action_name == "set_subscriptions":
+            return self.set_subscriptions(actor, list(action_input.get("kinds", [])))
+        if action_name == "send_message":
+            return self.send_message(source=actor, to=action_input["to"], text=action_input["text"])
+        return f"error: unknown action {action_name!r}"
 
     def set_subscriptions(self, name: str, kinds: list) -> str:
         kinds = list(dict.fromkeys(str(k) for k in kinds))
@@ -345,7 +418,7 @@ class World:
 
     def send_message(self, source: str, to: str, text: str) -> str:
         if to != "all" and to not in self.agents:
-            return f"error: no such agent {to!r} (agents: {', '.join(self.agents)}, or 'all')"
+            return f"error: no such agent {to!r} (agents: {', '.join(self.agents) or 'none'}, or 'all')"
         self.publish(
             Event(kind=MESSAGE, tick=self.tick, source=source, to=to, payload={"text": text})
         )
