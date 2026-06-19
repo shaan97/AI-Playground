@@ -14,6 +14,7 @@ from .digraph import Digraph, Vertex
 from .evolution import GraphDynamicalSystem
 from .kernel import PENDING, FunctionKernel, LocalKernel, Step, TransitionKernel
 from .observation import FullObservation, Observation
+from .registry import REGISTRY_ID, RegistryKernel, install_registry
 from .schedule import ParallelSchedule, UpdateSchedule
 from .topology import AddArc, AddVertex, RemoveArc, RemoveVertex, TopologyUpdate
 from .trajectory import Trajectory
@@ -31,6 +32,9 @@ __all__ = [
     "TransitionKernel",
     "FullObservation",
     "Observation",
+    "REGISTRY_ID",
+    "RegistryKernel",
+    "install_registry",
     "ParallelSchedule",
     "UpdateSchedule",
     "AddArc",
