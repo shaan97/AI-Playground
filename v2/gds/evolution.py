@@ -35,12 +35,14 @@ class GraphDynamicalSystem:
         schedule: UpdateSchedule | None = None,
         observation: Observation | None = None,
         registry: Vertex | None = None,
+        limits=None,
     ):
         self.config = config
         self.kernels: dict[Vertex, TransitionKernel] = dict(kernels)
         self.schedule = schedule or ParallelSchedule()
         self.observation = observation or FullObservation()
         self.registry = registry
+        self.limits = limits
         self.step_index = 0
         self.trajectory = Trajectory([config])
         self._counter = 0
@@ -77,13 +79,18 @@ class GraphDynamicalSystem:
 
         digraph = self.config.digraph
 
-        # (4) Apply topology updates after the synchronous state update.
+        # (4) Apply topology updates after the synchronous state update. The
+        # per-step creation budget (if any) is shared across all actors.
+        remaining = getattr(self.limits, "max_creations_per_step", None)
         for actor, updates in emitted:
             res = topology.apply(
                 digraph, next_states, self.kernels, actor, updates,
                 mint=self._mint, registry=self.registry,
+                limits=self.limits, creations_remaining=remaining,
             )
             digraph, next_states, self.kernels = res.digraph, res.states, res.kernels
+            if remaining is not None:
+                remaining -= len(res.created)
 
         # (5) Commit and record.
         self.config = Configuration(digraph, next_states)

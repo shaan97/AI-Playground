@@ -86,12 +86,22 @@ def apply(
     *,
     mint: Callable[[], Vertex],
     registry: Vertex | None = None,
+    limits=None,
+    creations_remaining: int | None = None,
 ) -> ApplyResult:
-    """Apply *actor*'s topology *updates*, enforcing the two laws.
+    """Apply *actor*'s topology *updates*, enforcing the two laws and `limits`.
 
     Returns fresh ``(digraph, states, kernels)`` plus the labels created. Pure
     w.r.t. its inputs (copies the mappings); the engine swaps in the result.
+
+    Resource guardrails (`gds.safety.Limits`) silently DROP over-budget updates
+    rather than raising: ``max_out_degree`` caps agent-emitted `AddArc` (registry
+    coupling is exempt — it is a system invariant, not an agent action),
+    ``max_vertices`` and ``creations_remaining`` cap `AddVertex`.
     """
+    max_out_degree = getattr(limits, "max_out_degree", None)
+    max_vertices = getattr(limits, "max_vertices", None)
+
     dg = digraph
     new_states = dict(states)
     new_kernels = dict(kernels)
@@ -99,10 +109,16 @@ def apply(
 
     for u in updates:
         if isinstance(u, AddArc):
+            if max_out_degree is not None and dg.out_degree(actor) >= max_out_degree:
+                continue  # out-degree cap reached — drop
             dg = dg.with_arc(actor, u.target)
         elif isinstance(u, RemoveArc):
             dg = dg.without_arc(actor, u.target)
         elif isinstance(u, AddVertex):
+            if max_vertices is not None and len(dg.vertices()) >= max_vertices:
+                continue  # total-vertex cap reached — drop
+            if creations_remaining is not None and len(created) >= creations_remaining:
+                continue  # per-step creation budget exhausted — drop
             w = mint()
             dg = dg.with_vertex(w, u.out_arcs)
             new_states[w] = u.initial_state

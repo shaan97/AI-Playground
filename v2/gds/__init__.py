@@ -15,6 +15,7 @@ from .evolution import GraphDynamicalSystem
 from .kernel import PENDING, FunctionKernel, LocalKernel, Step, TransitionKernel
 from .observation import FullObservation, Observation
 from .registry import REGISTRY_ID, RegistryKernel, install_registry
+from .safety import Limits
 from .schedule import (
     ParallelSchedule,
     RandomSubsetSchedule,
@@ -41,6 +42,7 @@ __all__ = [
     "REGISTRY_ID",
     "RegistryKernel",
     "install_registry",
+    "Limits",
     "ParallelSchedule",
     "RandomSubsetSchedule",
     "StochasticCadenceSchedule",
