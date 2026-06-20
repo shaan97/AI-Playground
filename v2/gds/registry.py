@@ -35,17 +35,11 @@ class RegistryKernel(TransitionKernel):
         return Step({"ledger": sorted(inputs.keys())})
 
 
-def install_registry(
+def _install_into(
     config: Configuration,
     kernels: Mapping[Vertex, TransitionKernel],
-    registry_id: Vertex = REGISTRY_ID,
+    registry_id: Vertex,
 ) -> tuple[Configuration, dict[Vertex, TransitionKernel], Vertex]:
-    """Add a registry vertex coupled ``r ↔ v`` to every existing vertex.
-
-    Returns ``(config, kernels, registry_id)`` with the registry installed
-    (initial state ``{"ledger": []}``, kernel `RegistryKernel`). Raises if
-    ``registry_id`` already names a vertex.
-    """
     if config.digraph.has_vertex(registry_id):
         raise ValueError(f"registry id {registry_id!r} already names a vertex")
 
@@ -58,3 +52,34 @@ def install_registry(
     new_states = {**config.states, registry_id: {"ledger": []}}
     new_kernels = {**dict(kernels), registry_id: RegistryKernel()}
     return Configuration(digraph, new_states), new_kernels, registry_id
+
+
+def install_registry(target, kernels=None, registry_id: Vertex = REGISTRY_ID):
+    """Add a registry vertex coupled ``r ↔ v`` to every existing vertex.
+
+    Two calling forms:
+
+    * ``install_registry(config, kernels) -> (config, kernels, registry_id)`` —
+      the pure form: returns new config & kernels with the registry installed.
+    * ``install_registry(gds) -> registry_id`` — the convenience form: installs
+      the registry into a `GraphDynamicalSystem` in place (updating its config,
+      kernels, registry, and the recorded initial snapshot) and returns the id.
+
+    The registry vertex gets initial state ``{"ledger": []}`` and a
+    `RegistryKernel`. Raises `ValueError` if ``registry_id`` already exists.
+    """
+    if isinstance(target, Configuration):
+        if kernels is None:
+            raise TypeError("install_registry(config, kernels): kernels is required")
+        return _install_into(target, kernels, registry_id)
+
+    # Convenience form: target is a GraphDynamicalSystem-like engine.
+    gds = target
+    config, new_kernels, rid = _install_into(gds.config, gds.kernels, registry_id)
+    gds.config = config
+    gds.kernels = new_kernels
+    gds.registry = rid
+    # Keep the recorded initial snapshot consistent if no steps have run yet.
+    if getattr(gds, "trajectory", None) is not None and len(gds.trajectory) == 1:
+        gds.trajectory.snapshots[0] = config
+    return rid

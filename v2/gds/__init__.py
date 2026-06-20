@@ -18,6 +18,7 @@ from .registry import REGISTRY_ID, RegistryKernel, install_registry
 from .schedule import ParallelSchedule, UpdateSchedule
 from .topology import AddArc, AddVertex, RemoveArc, RemoveVertex, TopologyUpdate
 from .trajectory import Trajectory
+from .agents.llm import LLMKernel
 
 __all__ = [
     "Configuration",
@@ -43,4 +44,5 @@ __all__ = [
     "RemoveVertex",
     "TopologyUpdate",
     "Trajectory",
+    "LLMKernel",
 ]
