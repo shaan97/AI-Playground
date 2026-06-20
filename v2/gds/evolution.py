@@ -63,9 +63,13 @@ class GraphDynamicalSystem:
         participants = self.schedule.participants(self.config)
 
         # (2)+(3) Evaluate on generation t; gather next states and emitted updates.
+        # Iterate in a sorted, deterministic order so that vertex-mint order and
+        # per-step creation-budget allocation do not depend on set hashing — the
+        # evolution stays reproducible across processes (state itself is
+        # double-buffered, so order never affects what each vertex computes).
         next_states = dict(self.config.states)
         emitted: list[tuple[Vertex, tuple]] = []
-        for v in participants:
+        for v in sorted(participants):
             kernel = self.kernels.get(v)
             if kernel is None:
                 continue
