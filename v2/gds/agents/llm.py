@@ -83,10 +83,12 @@ class LLMKernel(TransitionKernel):
     # ------------------------------------------------------------------ prompt
 
     def _render(self, state: State, inputs: dict[Vertex, State]) -> str:
+        # Present only facts — the vertex's own state and what it observes. Any
+        # framing/instruction is left to the system prompt, so a caller can give
+        # an agent as little or as much guidance as they want.
         return (
             "Your state:\n" + json.dumps(state, default=str)
             + "\n\nYou observe:\n" + json.dumps(inputs, default=str)
-            + "\n\nAct via tools; call set_state to update your state, then stop."
         )
 
     def _tool_specs(self) -> list[dict]:
@@ -100,10 +102,14 @@ class LLMKernel(TransitionKernel):
     # -------------------------------------------------------------- one turn
 
     def evaluate(self, state: State, inputs: dict[Vertex, State]) -> Result:
-        messages = [
-            {"role": "system", "content": self.system or DEFAULT_SYSTEM},
-            {"role": "user", "content": self._render(state, inputs)},
-        ]
+        # system is None -> use the default; system "" -> no system message at all
+        # (lets a caller hand the agent essentially nothing). A non-empty string
+        # is used verbatim.
+        system = DEFAULT_SYSTEM if self.system is None else self.system
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": self._render(state, inputs)})
         tool_specs = self._tool_specs()
 
         next_state = state
