@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 world_data/
 agent-workspaces/
+_viewer_shots/
