@@ -46,21 +46,28 @@ node .claude/skills/run-universe-viewer/driver.mjs http://127.0.0.1:8011 _viewer
 Expected output (verified this session):
 
 ```
-[api] meta: {"count":13,"latest":12,"agents":["agent"],"registry":"registry"}
-[api] history: 13 snapshots
-[api] trace agent@12: 5 messages
+[api] meta: {"count":10,"latest":9,"agents":["agent"],"registry":"registry","control":"running"}
+[api] history: 10 snapshots
+[api] trace agent@9: 5 messages
 [shot] _viewer_shots\01-graph.png
 [shot] _viewer_shots\02-vertex-state.png
 [ui] trace cards rendered: 5
 [shot] _viewer_shots\03-agent-trace.png
+[ui] stop-confirm modal open: true
+[shot] _viewer_shots\04-confirm-modal.png
+[ui] after pause: runState=paused
+[ui] after resume: runState=running
 
 PASS — viewer driven over CDP. Screenshots in _viewer_shots
 ```
 
 Screenshots land in `_viewer_shots/` (phone-sized, 430×932 @2x):
 `01-graph.png` (graph), `02-vertex-state.png` (agent selected, state tab),
-`03-agent-trace.png` (Trace tab — collapsible system/user/assistant/tool cards).
-**Open them and confirm they aren't blank** before claiming success.
+`03-agent-trace.png` (Trace tab — collapsible system/user/assistant/tool cards),
+`04-confirm-modal.png` (the Stop "Are you sure?" modal). The driver also
+exercises the operator controls: it opens + cancels the Stop modal and does a
+pause→resume round-trip (leaving the run running). **Open the PNGs and confirm
+they aren't blank** before claiming success.
 
 ## Inspect the JSON API directly (no browser)
 
@@ -70,7 +77,41 @@ curl -s http://127.0.0.1:8011/api/trace/12/agent
 ```
 
 Endpoints: `/api/meta`, `/api/history`, `/api/step/<i>`, `/api/trace/<i>/<vertex>`,
-`/api/stream` (SSE: `hello` then a `step` event per tick).
+`/api/stream` (SSE: `hello`, a `step` per tick, a `control` on run-state change).
+
+**Operator controls** (pause/resume/stop the live run remotely):
+
+```bash
+curl -s -X POST http://127.0.0.1:8011/api/control/pause
+curl -s -X POST http://127.0.0.1:8011/api/control/resume
+curl -s -X POST http://127.0.0.1:8011/api/control/stop
+```
+
+Each returns `{"state": "running"|"paused"|"stopped"}`. Stop ("Freeze") halts
+stepping but keeps the server up for inspection. All checked *between* steps, so a
+step never tears mid-flight. Unauthenticated — intended for a private tailnet.
+
+**Shutdown** saves a resumable snapshot and exits the process:
+
+```bash
+curl -s -X POST http://127.0.0.1:8011/api/control/shutdown   # {"state":"shutting_down"}
+```
+
+By default the snapshot lands in `runs/<timestamp>` (relative to the server's CWD,
+i.e. `v2/`); pass `serve_gds(..., save_dir=...)` or `--save <dir>` to choose. The
+demo also save-on-halts when `--save` is given.
+
+## Resume a saved run
+
+```bash
+python v2/examples/viewer_demo.py --resume v2/runs/<dir> --port 8016
+```
+
+Reloads the saved `Configuration` and continues stepping; history up to the resume
+point is preserved (scrub it in the viewer). Use `--resume-step N` for an earlier
+snapshot. Verified: a 54-step run shut down → resumed with `count: 55` and full
+history. Programmatically: `resume_gds(build, "<dir>", step=-1)` then
+`serve_gds(gds, ...)`.
 
 ## Run (human path) — open it on a phone/browser
 

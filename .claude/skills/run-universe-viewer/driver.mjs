@@ -155,7 +155,26 @@ async function main() {
     await shot("03-agent-trace.png");
   }
 
-  // 7. Report and tear down the browser (leaves the python server untouched).
+  // 7. Operator controls: open the "Are you sure?" stop modal, screenshot, cancel.
+  await evalJs("document.getElementById('stopBtn').click()");
+  await sleep(400);
+  const modalOpen = await evalJs("document.getElementById('modal').classList.contains('open')");
+  console.log(`[ui] stop-confirm modal open: ${modalOpen}`);
+  await shot("04-confirm-modal.png");
+  await evalJs("document.getElementById('modalCancel').click()");
+  await sleep(200);
+
+  // 8. Pause + resume round-trip via the real buttons (leaves it running).
+  await evalJs("document.getElementById('pauseBtn').click()");
+  await sleep(600);
+  const paused = await evalJs("document.getElementById('runState').textContent");
+  console.log(`[ui] after pause: runState=${paused}`);
+  await evalJs("document.getElementById('pauseBtn').click()");
+  await sleep(400);
+  const resumed = await evalJs("document.getElementById('runState').textContent");
+  console.log(`[ui] after resume: runState=${resumed}`);
+
+  // 9. Report and tear down the browser (leaves the python server untouched).
   console.log(`\nPASS — viewer driven over CDP. Screenshots in ${OUTDIR}`);
   await cdp.send("Target.closeTarget", { targetId });
   cdp.close();
