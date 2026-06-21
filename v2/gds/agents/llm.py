@@ -74,11 +74,17 @@ class LLMKernel(TransitionKernel):
         system: str | None = None,
         max_rounds: int = 6,
         tools: PrivateTools | None = None,
+        recorder: Callable[[list], None] | None = None,
     ):
         self.chat = chat
         self.system = system
         self.max_rounds = max_rounds
         self.tools = dict(tools or {})
+        # Optional sink for the per-turn transcript (the `messages` list). Purely
+        # observational — it never affects what the agent does or returns, so the
+        # substrate's semantics are unchanged whether or not one is attached. The
+        # viewer uses it to render agent trajectories.
+        self.recorder = recorder
 
     # ------------------------------------------------------------------ prompt
 
@@ -144,6 +150,13 @@ class LLMKernel(TransitionKernel):
                 result = self._apply(name, args, updates)
                 next_state = result.get("state", next_state)
                 messages.append({"role": "tool", "tool_call_id": cid, "content": result["content"]})
+
+        if self.recorder is not None:
+            # Best-effort: a broken sink must never break the agent's turn.
+            try:
+                self.recorder(messages)
+            except Exception:
+                pass
 
         return Step(next_state, tuple(updates))
 
