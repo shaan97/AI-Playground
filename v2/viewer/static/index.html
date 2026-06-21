@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0b0e14" />
+<title>Universe</title>
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #131826;
+    --panel-2: #1b2335;
+    --line: #273149;
+    --txt: #e6ebf5;
+    --muted: #8b96ad;
+    --accent: #6ea8fe;       /* agents */
+    --accent-2: #7ee0c0;     /* objects */
+    --registry: #c79bff;     /* registry */
+    --warn: #ffb86b;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-t: env(safe-area-inset-top, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--txt);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #cy { position: fixed; inset: 0; }
+
+  /* top bar */
+  #top {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    padding: calc(var(--safe-t) + 10px) 14px 10px;
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(180deg, rgba(11,14,20,.92), rgba(11,14,20,0));
+    pointer-events: none;
+  }
+  #top .title { font-weight: 700; letter-spacing: .3px; pointer-events: auto; }
+  #top .spacer { flex: 1; }
+  .pill {
+    pointer-events: auto;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 11px; font-size: 13px; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: #46d17f; box-shadow: 0 0 8px #46d17f; }
+  .dot.replay { background: var(--warn); }
+
+  /* bottom transport bar */
+  #transport {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 12px 14px calc(var(--safe-b) + 12px);
+    background: linear-gradient(0deg, rgba(11,14,20,.94), rgba(11,14,20,0));
+    display: flex; align-items: center; gap: 12px;
+  }
+  #scrub { flex: 1; accent-color: var(--accent); height: 24px; }
+  .btn {
+    background: var(--panel); border: 1px solid var(--line); color: var(--txt);
+    border-radius: 12px; padding: 9px 13px; font-size: 14px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    min-width: 44px; min-height: 44px; justify-content: center;
+  }
+  .btn:active { transform: scale(.96); }
+  .btn.on { border-color: var(--accent); color: var(--accent); }
+  #stepLabel {
+    font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted);
+    min-width: 64px; text-align: center;
+  }
+
+  /* legend */
+  #legend {
+    position: fixed; left: 14px; bottom: calc(var(--safe-b) + 86px); z-index: 4;
+    display: flex; gap: 12px; font-size: 11px; color: var(--muted);
+    background: rgba(19,24,38,.7); border: 1px solid var(--line);
+    border-radius: 10px; padding: 6px 10px; backdrop-filter: blur(6px);
+  }
+  #legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
+
+  /* bottom sheet */
+  #sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    transform: translateY(100%); transition: transform .28s cubic-bezier(.22,1,.36,1);
+    background: var(--panel); border-top-left-radius: 20px; border-top-right-radius: 20px;
+    border-top: 1px solid var(--line); box-shadow: 0 -16px 40px rgba(0,0,0,.5);
+    max-height: 78vh; display: flex; flex-direction: column;
+    padding-bottom: var(--safe-b);
+  }
+  #sheet.open { transform: translateY(0); }
+  .grip { width: 40px; height: 5px; border-radius: 3px; background: var(--line);
+          margin: 10px auto 4px; }
+  .sheet-head { display: flex; align-items: center; gap: 10px; padding: 4px 16px 10px; }
+  .sheet-title { font-size: 18px; font-weight: 700; flex: 1; word-break: break-all; }
+  .tag { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+  .tag.agent { background: rgba(110,168,254,.16); color: var(--accent); }
+  .tag.registry { background: rgba(199,155,255,.16); color: var(--registry); }
+  .tag.object { background: rgba(126,224,192,.14); color: var(--accent-2); }
+  .x { color: var(--muted); font-size: 24px; line-height: 1; padding: 4px 6px; cursor: pointer; }
+
+  .tabs { display: flex; gap: 6px; padding: 0 16px 8px; }
+  .tab { font-size: 13px; color: var(--muted); padding: 7px 12px; border-radius: 10px;
+         border: 1px solid transparent; cursor: pointer; }
+  .tab.on { color: var(--txt); background: var(--panel-2); border-color: var(--line); }
+
+  .sheet-body { overflow-y: auto; padding: 0 16px 18px; -webkit-overflow-scrolling: touch; }
+  .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+                   color: var(--muted); margin: 14px 0 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--panel-2); border: 1px solid var(--line); color: var(--txt);
+          border-radius: 8px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+  .chip.empty { color: var(--muted); border-style: dashed; cursor: default; }
+  pre.state {
+    background: #0d1220; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; overflow-x: auto; font-size: 12.5px; margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre;
+  }
+  .k { color: #9fc1ff; } .s { color: #9be7b4; } .n { color: var(--warn); }
+  .b { color: #ff9ec4; } .nl { color: var(--muted); }
+
+  /* trace cards (Antigravity-style) */
+  .turn-empty { color: var(--muted); padding: 18px 0; text-align: center; }
+  .msg { border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; overflow: hidden; }
+  .msg-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+              cursor: pointer; background: var(--panel-2); }
+  .role { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+  .role.system { color: var(--muted); }
+  .role.user { color: var(--accent-2); }
+  .role.assistant { color: var(--accent); }
+  .role.tool { color: var(--warn); }
+  .msg-prev { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+  .caret { color: var(--muted); transition: transform .2s; }
+  .msg.open .caret { transform: rotate(90deg); }
+  .msg-body { display: none; padding: 10px 12px; border-top: 1px solid var(--line);
+              font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+  .msg.open .msg-body { display: block; }
+  .toolcall { background: #0d1220; border: 1px solid var(--line); border-radius: 10px;
+              padding: 9px 11px; margin: 7px 0; font-family: ui-monospace, monospace; font-size: 12px; }
+  .toolcall .fn { color: var(--accent); font-weight: 700; }
+
+  #toast { position: fixed; left: 50%; transform: translateX(-50%);
+           bottom: calc(var(--safe-b) + 96px); z-index: 30;
+           background: var(--panel-2); border: 1px solid var(--line);
+           border-radius: 999px; padding: 8px 14px; font-size: 13px; opacity: 0;
+           transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="cy"></div>
+
+<div id="top">
+  <div class="title">✦ Universe</div>
+  <div class="spacer"></div>
+  <div class="pill"><span id="conn" class="dot"></span><span id="connTxt">connecting…</span></div>
+</div>
+
+<div id="legend">
+  <span><i style="background:var(--accent)"></i>agent</span>
+  <span><i style="background:var(--accent-2)"></i>object</span>
+  <span><i style="background:var(--registry)"></i>registry</span>
+</div>
+
+<div id="transport">
+  <button id="playBtn" class="btn" title="play/pause">▶</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" />
+  <span id="stepLabel">0 / 0</span>
+  <button id="liveBtn" class="btn on" title="follow live">LIVE</button>
+</div>
+
+<div id="sheet">
+  <div class="grip"></div>
+  <div class="sheet-head">
+    <span id="sheetTitle" class="sheet-title">vertex</span>
+    <span id="sheetTag" class="tag object">object</span>
+    <span id="sheetClose" class="x">×</span>
+  </div>
+  <div class="tabs">
+    <span id="tabState" class="tab on">State</span>
+    <span id="tabTrace" class="tab">Trace</span>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+/* ---------------- state ---------------- */
+const App = {
+  history: [],          // snapshots[step] = {step, states, arcs, traced}
+  meta: { agents: [], registry: null },
+  cur: 0,               // currently displayed step
+  follow: true,         // LIVE: snap to newest
+  playing: false,
+  selected: null,       // selected vertex id
+  tab: "state",
+  agents: new Set(),
+};
+
+/* ---------------- cytoscape ---------------- */
+const cy = cytoscape({
+  container: $("cy"),
+  minZoom: 0.2, maxZoom: 3,
+  wheelSensitivity: 0.25,
+  style: [
+    { selector: "node", style: {
+        "background-color": "var(--accent-2)",
+        "label": "data(label)", "color": "#cfe0ff", "font-size": 11,
+        "text-valign": "bottom", "text-margin-y": 4,
+        "width": "data(size)", "height": "data(size)",
+        "border-width": 2, "border-color": "#0b0e14",
+        "transition-property": "background-color, width, height, border-color",
+        "transition-duration": "200ms",
+    }},
+    { selector: "node.agent", style: { "background-color": "#6ea8fe" } },
+    { selector: "node.registry", style: { "background-color": "#c79bff" } },
+    { selector: "node.sel", style: { "border-color": "#ffffff", "border-width": 3 } },
+    { selector: "node.acted", style: { "border-color": "#46d17f", "border-width": 3 } },
+    { selector: "edge", style: {
+        "width": 1.4, "line-color": "#2c3856",
+        "target-arrow-color": "#2c3856", "target-arrow-shape": "triangle",
+        "arrow-scale": 0.8, "curve-style": "bezier", "opacity": 0.75,
+    }},
+    { selector: "edge.inc", style: { "line-color": "#6ea8fe", "target-arrow-color": "#6ea8fe", "opacity": 1, "width": 2 } },
+    { selector: "edge.out", style: { "line-color": "#7ee0c0", "target-arrow-color": "#7ee0c0", "opacity": 1, "width": 2 } },
+  ],
+});
+
+function colorOf(id) {
+  if (id === App.meta.registry) return "registry";
+  if (App.agents.has(id)) return "agent";
+  return "object";
+}
+
+let layoutRunning = false;
+function runLayout() {
+  const l = cy.layout({
+    name: "cose", animate: true, animationDuration: 500,
+    nodeRepulsion: 9000, idealEdgeLength: 90, edgeElasticity: 120,
+    gravity: 0.4, numIter: 600, randomize: false, fit: true, padding: 60,
+  });
+  l.run();
+}
+
+/* apply a snapshot to the graph, preserving positions; relayout on topo change */
+function applyStep(snap) {
+  if (!snap) return;
+  const ids = new Set(Object.keys(snap.states));
+  let topo = false;
+
+  cy.batch(() => {
+    cy.nodes().forEach((n) => { if (!ids.has(n.id())) { n.remove(); topo = true; } });
+    ids.forEach((id) => {
+      let n = cy.getElementById(id);
+      const cls = colorOf(id);
+      if (n.empty()) {
+        cy.add({ group: "nodes", data: { id, label: id, size: 26 } });
+        n = cy.getElementById(id);
+        topo = true;
+      }
+      n.data("state", snap.states[id]);
+      n.removeClass("agent registry object acted");
+      n.addClass(cls);
+      if ((snap.traced || []).includes(id)) n.addClass("acted");
+      const inDeg = countIn(snap, id);
+      n.data("size", Math.max(22, Math.min(46, 22 + inDeg * 5)));
+    });
+
+    const want = new Set();
+    for (const [u, outs] of Object.entries(snap.arcs || {})) {
+      for (const w of outs) { if (ids.has(w)) want.add(u + "" + w); }
+    }
+    cy.edges().forEach((e) => { if (!want.has(e.id())) { e.remove(); topo = true; } });
+    want.forEach((eid) => {
+      if (cy.getElementById(eid).empty()) {
+        const [u, w] = eid.split("");
+        cy.add({ group: "edges", data: { id: eid, source: u, target: w } });
+        topo = true;
+      }
+    });
+  });
+
+  if (topo) runLayout();
+  if (App.selected) highlightNeighbours(App.selected);
+}
+
+function countIn(snap, id) {
+  let c = 0;
+  for (const outs of Object.values(snap.arcs || {})) if (outs.includes(id)) c++;
+  return c;
+}
+
+/* ---------------- selection + neighbours ---------------- */
+function highlightNeighbours(id) {
+  cy.elements().removeClass("sel inc out");
+  const n = cy.getElementById(id);
+  if (n.empty()) return;
+  n.addClass("sel");
+  n.outgoers("edge").addClass("out");
+  n.incomers("edge").addClass("inc");
+}
+
+cy.on("tap", "node", (e) => openSheet(e.target.id()));
+cy.on("tap", (e) => { if (e.target === cy) closeSheet(); });
+
+/* ---------------- bottom sheet ---------------- */
+function openSheet(id) {
+  App.selected = id;
+  highlightNeighbours(id);
+  const cls = colorOf(id);
+  $("sheetTitle").textContent = id;
+  const tag = $("sheetTag");
+  tag.className = "tag " + cls;
+  tag.textContent = cls;
+  $("tabTrace").style.display = App.agents.has(id) ? "" : "none";
+  if (App.tab === "trace" && !App.agents.has(id)) setTab("state");
+  renderSheet();
+  $("sheet").classList.add("open");
+}
+function closeSheet() {
+  $("sheet").classList.remove("open");
+  App.selected = null;
+  cy.elements().removeClass("sel inc out");
+}
+$("sheetClose").addEventListener("click", closeSheet);
+
+function setTab(t) {
+  App.tab = t;
+  $("tabState").classList.toggle("on", t === "state");
+  $("tabTrace").classList.toggle("on", t === "trace");
+  renderSheet();
+}
+$("tabState").addEventListener("click", () => setTab("state"));
+$("tabTrace").addEventListener("click", () => setTab("trace"));
+
+function renderSheet() {
+  const id = App.selected;
+  if (!id) return;
+  const body = $("sheetBody");
+  if (App.tab === "trace") { renderTrace(id, body); return; }
+
+  const snap = App.history[App.cur];
+  const state = snap ? snap.states[id] : null;
+  const arcs = (snap && snap.arcs) || {};
+  const observes = arcs[id] || [];
+  const observedBy = Object.entries(arcs).filter(([, o]) => o.includes(id)).map(([u]) => u);
+
+  body.innerHTML = "";
+  body.appendChild(chipSection("Observes  (its inputs →)", observes));
+  body.appendChild(chipSection("Observed by  (← can influence)", observedBy));
+  const lbl = document.createElement("div");
+  lbl.className = "section-label"; lbl.textContent = "State";
+  body.appendChild(lbl);
+  const pre = document.createElement("pre");
+  pre.className = "state";
+  pre.innerHTML = jsonHtml(state);
+  body.appendChild(pre);
+}
+
+function chipSection(label, ids) {
+  const wrap = document.createElement("div");
+  const l = document.createElement("div");
+  l.className = "section-label"; l.textContent = label + (ids.length ? "  (" + ids.length + ")" : "");
+  wrap.appendChild(l);
+  const chips = document.createElement("div");
+  chips.className = "chips";
+  if (!ids.length) {
+    const c = document.createElement("span");
+    c.className = "chip empty"; c.textContent = "none";
+    chips.appendChild(c);
+  } else {
+    ids.forEach((nid) => {
+      const c = document.createElement("span");
+      c.className = "chip"; c.textContent = nid;
+      c.addEventListener("click", () => openSheet(nid));
+      chips.appendChild(c);
+    });
+  }
+  wrap.appendChild(chips);
+  return wrap;
+}
+
+/* ---------------- trace rendering ---------------- */
+async function renderTrace(id, body) {
+  body.innerHTML = '<div class="turn-empty">loading turn…</div>';
+  let data;
+  try {
+    const r = await fetch(`/api/trace/${App.cur}/${encodeURIComponent(id)}`);
+    data = await r.json();
+  } catch (e) { body.innerHTML = '<div class="turn-empty">could not load trace</div>'; return; }
+  const msgs = (data && data.messages) || [];
+  if (App.selected !== id || App.tab !== "trace") return; // changed while loading
+  if (!msgs.length) {
+    body.innerHTML = `<div class="turn-empty">No turn recorded at step ${App.cur}.<br/>` +
+      `This agent didn't act on this step — scrub to a step where it's outlined in green.</div>`;
+    return;
+  }
+  body.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "section-label";
+  head.textContent = `Turn at step ${App.cur} — ${msgs.length} messages`;
+  body.appendChild(head);
+  msgs.forEach((m) => body.appendChild(msgCard(m)));
+}
+
+function msgCard(m) {
+  const role = m.role || "?";
+  const card = document.createElement("div");
+  card.className = "msg";
+  const head = document.createElement("div");
+  head.className = "msg-head";
+  head.innerHTML =
+    `<span class="role ${role}">${role}</span>` +
+    `<span class="msg-prev">${esc(previewOf(m))}</span>` +
+    `<span class="caret">›</span>`;
+  card.appendChild(head);
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "msg-body";
+  if (m.content) {
+    const p = document.createElement("div");
+    p.textContent = m.content;
+    bodyEl.appendChild(p);
+  }
+  (m.tool_calls || []).forEach((tc) => {
+    const fn = (tc.function || {});
+    const d = document.createElement("div");
+    d.className = "toolcall";
+    let args = fn.arguments;
+    try { args = JSON.stringify(JSON.parse(args), null, 2); } catch (e) {}
+    d.innerHTML = `<span class="fn">${esc(fn.name || "fn")}</span>(` +
+      `<br/>${esc(typeof args === "string" ? args : JSON.stringify(args, null, 2))}<br/>)`;
+    bodyEl.appendChild(d);
+  });
+  if (!m.content && !(m.tool_calls || []).length) {
+    bodyEl.textContent = "(empty)";
+  }
+  card.appendChild(bodyEl);
+  head.addEventListener("click", () => card.classList.toggle("open"));
+  if (role === "assistant" || role === "tool") card.classList.add("open");
+  return card;
+}
+
+function previewOf(m) {
+  if (m.tool_calls && m.tool_calls.length) {
+    return m.tool_calls.map((t) => (t.function && t.function.name) || "call").join(", ");
+  }
+  return (m.content || "").replace(/\s+/g, " ").slice(0, 80);
+}
+
+/* ---------------- JSON pretty-printer (tiny syntax highlight) ---------------- */
+function jsonHtml(v) {
+  if (v === undefined) return '<span class="nl">undefined</span>';
+  const json = JSON.stringify(v, null, 2);
+  if (json === undefined) return esc(String(v));
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (match) => {
+      let cls = "n";
+      if (/^"/.test(match)) cls = /:$/.test(match) ? "k" : "s";
+      else if (/true|false/.test(match)) cls = "b";
+      else if (/null/.test(match)) cls = "nl";
+      return `<span class="${cls}">${esc(match)}</span>`;
+    });
+}
+function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+/* ---------------- transport (scrub / play / live) ---------------- */
+const scrub = $("scrub");
+function gotoStep(i, fromUser) {
+  i = Math.max(0, Math.min(i, App.history.length - 1));
+  App.cur = i;
+  scrub.value = i;
+  $("stepLabel").textContent = `${i} / ${Math.max(0, App.history.length - 1)}`;
+  applyStep(App.history[i]);
+  if (App.selected) renderSheet();
+  if (fromUser && i < App.history.length - 1) setLive(false);
+}
+function setLive(on) {
+  App.follow = on;
+  $("liveBtn").classList.toggle("on", on);
+  if (on) { setPlaying(false); gotoStep(App.history.length - 1); }
+}
+function setPlaying(on) {
+  App.playing = on;
+  $("playBtn").textContent = on ? "❚❚" : "▶";
+  $("playBtn").classList.toggle("on", on);
+}
+scrub.addEventListener("input", () => gotoStep(parseInt(scrub.value, 10), true));
+$("liveBtn").addEventListener("click", () => setLive(!App.follow));
+$("playBtn").addEventListener("click", () => {
+  if (App.playing) { setPlaying(false); return; }
+  if (App.cur >= App.history.length - 1) App.cur = 0;
+  setLive(false); setPlaying(true);
+});
+setInterval(() => {
+  if (!App.playing) return;
+  if (App.cur >= App.history.length - 1) { setPlaying(false); return; }
+  gotoStep(App.cur + 1);
+}, 900);
+
+/* ---------------- data sync ---------------- */
+function ingestMeta(meta) {
+  App.meta = meta;
+  App.agents = new Set(meta.agents || []);
+}
+function pushSnap(snap) {
+  App.history[snap.step] = snap;
+  const max = App.history.length - 1;
+  scrub.max = max;
+  if (App.follow) gotoStep(max);
+  else $("stepLabel").textContent = `${App.cur} / ${max}`;
+}
+function setConn(state) {
+  const dot = $("conn"), txt = $("connTxt");
+  dot.className = "dot " + (state === "live" ? "live" : state === "replay" ? "replay" : "");
+  txt.textContent = state === "live" ? "live" : state === "replay" ? "history" : "connecting…";
+}
+
+async function boot() {
+  try {
+    const meta = await (await fetch("/api/meta")).json();
+    ingestMeta(meta);
+    const hist = await (await fetch("/api/history")).json();
+    hist.forEach((s) => { App.history[s.step] = s; });
+    if (App.history.length) { scrub.max = App.history.length - 1; gotoStep(App.history.length - 1); }
+  } catch (e) { /* server may be mid-start */ }
+  connectStream();
+}
+
+function connectStream() {
+  const es = new EventSource("/api/stream");
+  es.addEventListener("hello", (ev) => { ingestMeta(JSON.parse(ev.data)); setConn("live"); });
+  es.addEventListener("step", (ev) => { setConn("live"); pushSnap(JSON.parse(ev.data)); });
+  es.onerror = () => {
+    setConn("replay");
+    es.close();
+    setTimeout(connectStream, 2500); // auto-reconnect
+  };
+}
+
+boot();
+</script>
+</body>
+</html>
