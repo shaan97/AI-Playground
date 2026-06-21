@@ -49,6 +49,8 @@ class ViewerHub:
         # Vertices whose kernel is an LLM (agents) — for UI styling.
         self._agents: set[str] = set()
         self._registry: str | None = None
+        # Last broadcast operator run-state (running/paused/stopped).
+        self._control_state = "running"
         self._subscribers: list[queue.Queue] = []
 
     # ------------------------------------------------------------ instrumenting
@@ -97,9 +99,20 @@ class ViewerHub:
             subscribers = list(self._subscribers)
 
         payload = json.dumps(snap, ensure_ascii=False)
+        self._broadcast("step", payload)
+
+    def publish_control(self, state: str) -> None:
+        """Record and broadcast a new operator run-state to all clients."""
+        with self._lock:
+            self._control_state = state
+        self._broadcast("control", json.dumps({"state": state}))
+
+    def _broadcast(self, event: str, data: str) -> None:
+        with self._lock:
+            subscribers = list(self._subscribers)
         for q in subscribers:
             try:
-                q.put_nowait(payload)
+                q.put_nowait((event, data))
             except queue.Full:  # pragma: no cover - unbounded queues used
                 pass
 
@@ -112,6 +125,7 @@ class ViewerHub:
                 "latest": len(self._snapshots) - 1,
                 "agents": sorted(self._agents),
                 "registry": self._registry,
+                "control": self._control_state,
             }
 
     def history(self) -> list[dict]:

@@ -49,6 +49,39 @@
   .dot.live { background: #46d17f; box-shadow: 0 0 8px #46d17f; }
   .dot.replay { background: var(--warn); }
 
+  /* run-state pill + operator controls */
+  #runState { pointer-events: auto; font-weight: 700; text-transform: capitalize; }
+  #runState.run-running { color: #46d17f; }
+  #runState.run-paused { color: var(--warn); }
+  #runState.run-stopped { color: #ff7a7a; }
+  #top .ctrl {
+    pointer-events: auto; background: var(--panel); border: 1px solid var(--line);
+    color: var(--txt); border-radius: 11px; width: 42px; height: 42px; font-size: 16px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  #top .ctrl:active { transform: scale(.93); }
+  #top .ctrl:disabled { opacity: .35; cursor: default; }
+  #stopBtn { color: #ff7a7a; border-color: #5a2630; }
+
+  /* confirm modal */
+  #modal {
+    position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.6);
+    display: none; align-items: center; justify-content: center; padding: 24px;
+    backdrop-filter: blur(2px);
+  }
+  #modal.open { display: flex; }
+  .modal-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+    padding: 22px; max-width: 360px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  .modal-card h3 { margin: 0 0 8px; font-size: 19px; }
+  .modal-card p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-actions.modal-actions-col { flex-direction: column; }
+  .modal-actions .btn { flex: 1; justify-content: center; }
+  .btn.danger { background: #3a1d23; border-color: #7a3340; color: #ff9a9a; }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+
   /* bottom transport bar */
   #transport {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
@@ -154,7 +187,10 @@
 <div id="top">
   <div class="title">✦ Universe</div>
   <div class="spacer"></div>
-  <div class="pill"><span id="conn" class="dot"></span><span id="connTxt">connecting…</span></div>
+  <span id="runState" class="pill run-running">running</span>
+  <button id="pauseBtn" class="ctrl" title="pause">⏸</button>
+  <button id="stopBtn" class="ctrl" title="stop">⏹</button>
+  <span id="conn" class="dot" title="connecting…"></span>
 </div>
 
 <div id="legend">
@@ -182,6 +218,20 @@
     <span id="tabTrace" class="tab">Trace</span>
   </div>
   <div class="sheet-body" id="sheetBody"></div>
+</div>
+
+<div id="modal">
+  <div class="modal-card">
+    <h3>Stop or shut down?</h3>
+    <p><b>Freeze</b> halts stepping but keeps the viewer running so you can inspect
+       the final state. <b>Save &amp; shut down</b> writes a snapshot and exits the
+       process — you can resume it later.</p>
+    <div class="modal-actions modal-actions-col">
+      <button id="modalFreeze" class="btn">Freeze run</button>
+      <button id="modalShutdown" class="btn danger">Save &amp; shut down</button>
+      <button id="modalCancel" class="btn ghost">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -502,10 +552,63 @@ setInterval(() => {
   gotoStep(App.cur + 1);
 }, 900);
 
+/* ---------------- operator controls (pause / resume / stop) ---------------- */
+const Control = { state: "running" };
+function applyControl(state) {
+  if (!state) return;
+  Control.state = state;
+  const pill = $("runState");
+  pill.textContent = state;
+  pill.className = "pill run-" + state;
+  const pause = $("pauseBtn"), stop = $("stopBtn");
+  if (state === "stopped") {
+    pause.disabled = true; stop.disabled = true; pause.textContent = "⏸";
+  } else {
+    pause.disabled = false; stop.disabled = false;
+    pause.textContent = state === "paused" ? "▶" : "⏸";
+    pause.title = state === "paused" ? "resume" : "pause";
+  }
+}
+async function postControl(action) {
+  try {
+    const r = await fetch("/api/control/" + action, { method: "POST" });
+    const d = await r.json();
+    if (d.state) applyControl(d.state); else toast(d.error || "control failed");
+  } catch (e) { toast("control request failed"); }
+}
+$("pauseBtn").addEventListener("click", () => {
+  if (Control.state === "stopped") return;
+  postControl(Control.state === "paused" ? "resume" : "pause");
+});
+$("stopBtn").addEventListener("click", () => {
+  if (Control.state !== "stopped") $("modal").classList.add("open");
+});
+$("modalCancel").addEventListener("click", () => $("modal").classList.remove("open"));
+$("modalFreeze").addEventListener("click", () => {
+  $("modal").classList.remove("open");
+  postControl("stop");
+});
+$("modalShutdown").addEventListener("click", async () => {
+  $("modal").classList.remove("open");
+  applyControl("stopped");
+  try { await fetch("/api/control/shutdown", { method: "POST" }); } catch (e) {}
+  toast("Server shutting down — run saved. You can resume it later.");
+});
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").classList.remove("open"); });
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
 /* ---------------- data sync ---------------- */
 function ingestMeta(meta) {
   App.meta = meta;
   App.agents = new Set(meta.agents || []);
+  applyControl(meta.control);
 }
 function pushSnap(snap) {
   App.history[snap.step] = snap;
@@ -515,9 +618,9 @@ function pushSnap(snap) {
   else $("stepLabel").textContent = `${App.cur} / ${max}`;
 }
 function setConn(state) {
-  const dot = $("conn"), txt = $("connTxt");
+  const dot = $("conn");
   dot.className = "dot " + (state === "live" ? "live" : state === "replay" ? "replay" : "");
-  txt.textContent = state === "live" ? "live" : state === "replay" ? "history" : "connecting…";
+  dot.title = state === "live" ? "live" : state === "replay" ? "reconnecting…" : "connecting…";
 }
 
 async function boot() {
@@ -535,6 +638,7 @@ function connectStream() {
   const es = new EventSource("/api/stream");
   es.addEventListener("hello", (ev) => { ingestMeta(JSON.parse(ev.data)); setConn("live"); });
   es.addEventListener("step", (ev) => { setConn("live"); pushSnap(JSON.parse(ev.data)); });
+  es.addEventListener("control", (ev) => applyControl(JSON.parse(ev.data).state));
   es.onerror = () => {
     setConn("replay");
     es.close();

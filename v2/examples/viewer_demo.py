@@ -116,11 +116,24 @@ def main() -> int:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--save", default=None,
+                   help="directory to save a resumable snapshot on halt")
+    p.add_argument("--resume", default=None,
+                   help="resume a run from a saved directory instead of starting fresh")
+    p.add_argument("--resume-step", type=int, default=-1,
+                   help="snapshot index to resume from (default: last)")
     args = p.parse_args()
 
     random.seed(args.seed)
-    gds = build()
-    serve_gds(gds, steps=args.steps, delay=args.delay, host=args.host, port=args.port)
+    if args.resume:
+        from viewer import resume_gds
+        gds = resume_gds(build, args.resume, step=args.resume_step)
+        print(f"Resumed from {args.resume} at step {gds.step_index} "
+              f"({len(gds.config.vertices())} vertices).")
+    else:
+        gds = build()
+    serve_gds(gds, steps=args.steps, delay=args.delay, host=args.host,
+              port=args.port, save_dir=args.save)
     return 0
 
 

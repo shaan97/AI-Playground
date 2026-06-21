@@ -22,18 +22,20 @@ from __future__ import annotations
 import json
 import queue
 import socket
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
+from .control import RunControl
 from .hub import ViewerHub
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-def _make_handler(hub: ViewerHub):
+def _make_handler(hub: ViewerHub, control: RunControl | None = None, on_shutdown=None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -95,6 +97,35 @@ def _make_handler(hub: ViewerHub):
             else:
                 self._send_json({"error": "not found"}, status=404)
 
+        # --- control (operator intervention) -------------------------------
+        def do_POST(self):
+            path = self.path.split("?", 1)[0].rstrip("/")
+            # Drain any request body so the connection stays clean for keep-alive.
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
+            if not path.startswith("/api/control/"):
+                self._send_json({"error": "not found"}, status=404)
+                return
+            if control is None:
+                self._send_json({"error": "controls disabled"}, status=404)
+                return
+            action = path.rsplit("/", 1)[1]
+            if action == "shutdown":
+                if on_shutdown is None:
+                    self._send_json({"error": "shutdown disabled"}, status=404)
+                    return
+                # Reply *before* the process tears down so the client gets ack.
+                self._send_json({"state": "shutting_down"})
+                on_shutdown()
+                return
+            actions = {"pause": control.pause, "resume": control.resume, "stop": control.stop}
+            fn = actions.get(action)
+            if fn is None:
+                self._send_json({"error": f"unknown action {action!r}"}, status=400)
+                return
+            self._send_json({"state": fn()})
+
         # --- SSE -----------------------------------------------------------
         def _stream(self):
             self.send_response(200)
@@ -109,12 +140,12 @@ def _make_handler(hub: ViewerHub):
                 self.wfile.flush()
                 while True:
                     try:
-                        payload = q.get(timeout=15)
+                        event, payload = q.get(timeout=15)
                     except queue.Empty:
                         self.wfile.write(b": ping\n\n")  # heartbeat
                         self.wfile.flush()
                         continue
-                    self.wfile.write(f"event: step\ndata: {payload}\n\n".encode("utf-8"))
+                    self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode("utf-8"))
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
@@ -124,9 +155,22 @@ def _make_handler(hub: ViewerHub):
     return Handler
 
 
-def start_server(hub: ViewerHub, host: str = "0.0.0.0", port: int = 8000):
+class _QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that swallows the connection-reset tracebacks a normal
+    `http.server` prints when an SSE client disconnects — routine on phones that
+    lock the screen or background the tab, not an error worth a stack trace."""
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
+def start_server(hub: ViewerHub, host: str = "0.0.0.0", port: int = 8000,
+                 control: RunControl | None = None, on_shutdown=None):
     """Start the viewer HTTP server in a daemon thread; return the server."""
-    httpd = ThreadingHTTPServer((host, port), _make_handler(hub))
+    httpd = _QuietThreadingHTTPServer((host, port), _make_handler(hub, control, on_shutdown))
     httpd.daemon_threads = True
     threading.Thread(target=httpd.serve_forever, name="viewer-http", daemon=True).start()
     return httpd
@@ -147,9 +191,9 @@ def _lan_ip() -> str:
 def _print_urls(port: int) -> None:
     ip = _lan_ip()
     print("\n  Universe viewer is live. Open on your phone:")
-    print(f"    • this machine : http://localhost:{port}")
-    print(f"    • same wifi    : http://{ip}:{port}")
-    print(f"    • anywhere     : http://<your-machine>.<tailnet>.ts.net:{port}")
+    print(f"    - this machine : http://localhost:{port}")
+    print(f"    - same wifi    : http://{ip}:{port}")
+    print(f"    - anywhere     : http://<your-machine>.<tailnet>.ts.net:{port}")
     print("                     (run `tailscale ip -4` / use MagicDNS; phone on the")
     print("                      same tailnet, then this works over cellular too)\n")
 
@@ -162,40 +206,84 @@ def serve_gds(
     host: str = "0.0.0.0",
     port: int = 8000,
     hub: ViewerHub | None = None,
+    save_dir: str | None = None,
 ) -> ViewerHub:
     """Instrument `gds`, serve the viewer, and run the step loop live.
 
     Captures the genesis configuration, then steps `steps` times (or forever if
     `steps` is None), pausing `delay` seconds between steps so the evolution is
-    watchable on a phone. Returns the hub.
+    watchable on a phone.
+
+    Halting (remote Stop, finite `steps`, or Ctrl-C) freezes the world but keeps
+    the server up for inspection. A remote **Shutdown** additionally saves a
+    resumable snapshot and exits the process. If `save_dir` is given, the run is
+    saved there on every halt; otherwise Shutdown saves to ``runs/<timestamp>``.
+    Returns the hub.
     """
     hub = hub or ViewerHub()
     hub.instrument(gds)
-    start_server(hub, host=host, port=port)
+    control = RunControl(on_change=hub.publish_control)
+    shutdown = threading.Event()
+
+    def _save() -> str | None:
+        from .persistence import save_run
+        target = save_dir or f"runs/run-{time.strftime('%Y%m%d-%H%M%S')}"
+        try:
+            path = save_run(gds, target)
+            print(f"  Saved run -> {path}  (resume with --resume {path})")
+            return str(path)
+        except Exception as exc:  # saving must never crash shutdown
+            print(f"  WARN: could not save run: {exc!r}")
+            return None
+
+    def _on_shutdown() -> None:
+        control.stop()       # halt the loop
+        shutdown.set()       # release the idle wait → process exits
+
+    start_server(hub, host=host, port=port, control=control, on_shutdown=_on_shutdown)
     _print_urls(port)
 
     hub.publish(gds)  # genesis (step 0)
+    stopped = False
     try:
         t = 0
         while steps is None or t < steps:
+            control.wait_while_paused()       # block here while paused
+            if control.should_stop():         # remote stop → leave the loop
+                stopped = True
+                break
             gds.step()
             hub.publish(gds)
             t += 1
-            if delay:
-                time.sleep(delay)
+            control.sleep(delay)              # inter-step delay, interruptible
     except KeyboardInterrupt:
-        print("\n  stopped. (server still up — Ctrl-C again to exit)")
-        try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            pass
+        stopped = True
+        print("\n  stopped (local).")
     else:
-        print(f"\n  Done — {len(hub.history())} configurations. Server still serving; "
-              "Ctrl-C to exit.")
-        try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            pass
+        if stopped:
+            print(f"\n  Stopped remotely at {len(hub.history()) - 1} steps.")
+        else:
+            print(f"\n  Done — {len(hub.history())} configurations.")
+
+    # Reflect the halted run-state, then idle so the final world stays inspectable
+    # — until a remote Shutdown (or Ctrl-C) exits. Every exit path saves a
+    # resumable snapshot exactly once.
+    control.stop()
+    saved = {"done": False}
+
+    def _save_once() -> None:
+        if not saved["done"]:
+            _save()
+            saved["done"] = True
+
+    if save_dir is not None:
+        _save_once()  # save-on-halt when a target was given
+    print("  Server still serving for inspection. Ctrl-C — or remote Shutdown — to exit.")
+    try:
+        shutdown.wait()
+    except KeyboardInterrupt:
+        pass
+    _save_once()      # guarantee a resumable snapshot on the way out
+    if shutdown.is_set():
+        print("  Shutting down.")
     return hub
