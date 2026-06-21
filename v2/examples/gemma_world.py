@@ -87,10 +87,25 @@ def main() -> int:
     p.add_argument("--steps", type=int, default=6, help="number of world steps")
     p.add_argument("--system", default=DEFAULT_SYSTEM,
                    help="system prompt for the agent (default: none — minimal)")
+    p.add_argument("--viewer", action="store_true",
+                   help="serve the phone web viewer and watch the run live")
+    p.add_argument("--port", type=int, default=8000, help="viewer port (with --viewer)")
+    p.add_argument("--delay", type=float, default=1.0,
+                   help="seconds between steps when serving the viewer")
     args = p.parse_args()
 
     gds = build(args.model, args.url, args.system)
     sys_note = "none (minimal)" if not args.system else repr(args.system[:60] + "...")
+
+    if args.viewer:
+        # Hand the world to the web viewer: it instruments the agent for tracing,
+        # serves the UI, and runs the step loop live. Open the printed URL on your
+        # phone (same wifi, or over Tailscale from anywhere).
+        from viewer import serve_gds
+        print(f"World built (model={args.model}, system={sys_note}). Serving the viewer.")
+        serve_gds(gds, steps=args.steps, delay=args.delay, port=args.port)
+        return 0
+
     print(f"World built (model={args.model}, system={sys_note}). Stepping {args.steps} times.\n")
     print("step 0 (genesis):")
     print(render(gds))
