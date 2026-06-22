@@ -46,11 +46,14 @@ use `start_server(hub)` + `hub.publish(gds)` yourself (see `server.py`).
   step* (an agent took a turn). Node size grows with in-degree (how observed it
   is).
 - **Tap a vertex** — bottom sheet with what it *observes*, what *observes it*, and
-  its full state (pretty-printed JSON). Tap a neighbour chip to jump to it.
+  its full state (pretty-printed JSON). Tap a neighbour chip to jump to it. The
+  sheet has its own **‹ step N / M ›** arrows so you can move through history while
+  staying on the same vertex (state and trace update with each step).
 - **Trace tab** (agents only) — the selected step's turn as collapsible cards:
   system / user (what it saw) / assistant (reasoning + tool calls) / tool results.
-- **Transport bar** — scrub the timeline, ▶ to play through history, **LIVE** to
-  snap to the newest step and follow in real time.
+- **Transport bar** — **‹ ›** step one tick back/forward, scrub the timeline, ▶ to
+  play through history, **LIVE** to snap to the newest step and follow live.
+  (Arrow keys ←/→ also step.)
 - **Operator controls** (top bar) — a run-state pill plus **⏸ Pause/Resume** and
   **⏹ Stop**. The Stop button opens an "Are you sure?" modal offering **Freeze run**
   (halt stepping, keep the viewer up for inspection) or **Save & shut down** (write

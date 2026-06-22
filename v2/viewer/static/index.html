@@ -89,7 +89,7 @@
     background: linear-gradient(0deg, rgba(11,14,20,.94), rgba(11,14,20,0));
     display: flex; align-items: center; gap: 12px;
   }
-  #scrub { flex: 1; accent-color: var(--accent); height: 24px; }
+  #scrub { flex: 1; accent-color: var(--accent); height: 24px; min-width: 60px; }
   .btn {
     background: var(--panel); border: 1px solid var(--line); color: var(--txt);
     border-radius: 12px; padding: 9px 13px; font-size: 14px; font-weight: 600;
@@ -98,9 +98,26 @@
   }
   .btn:active { transform: scale(.96); }
   .btn.on { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: .3; cursor: default; }
+  /* compact step buttons (◀ ▶) in the transport bar */
+  #transport .nav { min-width: 40px; padding: 9px 8px; font-size: 20px; line-height: 1; }
   #stepLabel {
     font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted);
-    min-width: 64px; text-align: center;
+    min-width: 56px; text-align: center;
+  }
+
+  /* step navigation row inside the bottom sheet */
+  .sheet-step {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    padding: 2px 16px 10px;
+  }
+  .sheet-step .nav {
+    min-width: 46px; min-height: 38px; font-size: 20px; line-height: 1;
+    padding: 6px 10px; border-radius: 10px;
+  }
+  #sheetStepLabel {
+    font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted);
+    min-width: 96px; text-align: center;
   }
 
   /* legend */
@@ -200,8 +217,10 @@
 </div>
 
 <div id="transport">
+  <button id="prevBtn" class="btn nav" title="previous step">‹</button>
   <button id="playBtn" class="btn" title="play/pause">▶</button>
   <input id="scrub" type="range" min="0" max="0" value="0" step="1" />
+  <button id="nextBtn" class="btn nav" title="next step">›</button>
   <span id="stepLabel">0 / 0</span>
   <button id="liveBtn" class="btn on" title="follow live">LIVE</button>
 </div>
@@ -212,6 +231,11 @@
     <span id="sheetTitle" class="sheet-title">vertex</span>
     <span id="sheetTag" class="tag object">object</span>
     <span id="sheetClose" class="x">×</span>
+  </div>
+  <div class="sheet-step">
+    <button id="sheetPrev" class="btn nav" title="previous step">‹</button>
+    <span id="sheetStepLabel">step 0 / 0</span>
+    <button id="sheetNext" class="btn nav" title="next step">›</button>
   </div>
   <div class="tabs">
     <span id="tabState" class="tab on">State</span>
@@ -518,21 +542,33 @@ function jsonHtml(v) {
 }
 function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 
-/* ---------------- transport (scrub / play / live) ---------------- */
+/* ---------------- transport (scrub / play / live / step) ---------------- */
 const scrub = $("scrub");
+function lastStep() { return Math.max(0, App.history.length - 1); }
+function updateStepLabels() {
+  const max = lastStep();
+  $("stepLabel").textContent = `${App.cur} / ${max}`;
+  $("sheetStepLabel").textContent = `step ${App.cur} / ${max}`;
+  $("prevBtn").disabled = $("sheetPrev").disabled = App.cur <= 0;
+  $("nextBtn").disabled = $("sheetNext").disabled = App.cur >= max;
+}
 function gotoStep(i, fromUser) {
-  i = Math.max(0, Math.min(i, App.history.length - 1));
+  i = Math.max(0, Math.min(i, lastStep()));
   App.cur = i;
   scrub.value = i;
-  $("stepLabel").textContent = `${i} / ${Math.max(0, App.history.length - 1)}`;
   applyStep(App.history[i]);
   if (App.selected) renderSheet();
-  if (fromUser && i < App.history.length - 1) setLive(false);
+  if (fromUser && i < lastStep()) setLive(false);
+  updateStepLabels();
+}
+function stepBy(delta) {
+  setPlaying(false);
+  gotoStep(App.cur + delta, true);
 }
 function setLive(on) {
   App.follow = on;
   $("liveBtn").classList.toggle("on", on);
-  if (on) { setPlaying(false); gotoStep(App.history.length - 1); }
+  if (on) { setPlaying(false); gotoStep(lastStep()); }
 }
 function setPlaying(on) {
   App.playing = on;
@@ -541,9 +577,18 @@ function setPlaying(on) {
 }
 scrub.addEventListener("input", () => gotoStep(parseInt(scrub.value, 10), true));
 $("liveBtn").addEventListener("click", () => setLive(!App.follow));
+$("prevBtn").addEventListener("click", () => stepBy(-1));
+$("nextBtn").addEventListener("click", () => stepBy(1));
+$("sheetPrev").addEventListener("click", () => stepBy(-1));
+$("sheetNext").addEventListener("click", () => stepBy(1));
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); stepBy(-1); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); stepBy(1); }
+});
 $("playBtn").addEventListener("click", () => {
   if (App.playing) { setPlaying(false); return; }
-  if (App.cur >= App.history.length - 1) App.cur = 0;
+  if (App.cur >= lastStep()) App.cur = 0;
   setLive(false); setPlaying(true);
 });
 setInterval(() => {
@@ -612,10 +657,9 @@ function ingestMeta(meta) {
 }
 function pushSnap(snap) {
   App.history[snap.step] = snap;
-  const max = App.history.length - 1;
-  scrub.max = max;
-  if (App.follow) gotoStep(max);
-  else $("stepLabel").textContent = `${App.cur} / ${max}`;
+  scrub.max = lastStep();
+  if (App.follow) gotoStep(lastStep());
+  else updateStepLabels();  // new step extended the range; refresh bounds/labels
 }
 function setConn(state) {
   const dot = $("conn");
