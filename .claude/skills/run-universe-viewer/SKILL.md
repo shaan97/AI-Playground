@@ -53,21 +53,24 @@ Expected output (verified this session):
 [shot] _viewer_shots\02-vertex-state.png
 [ui] trace cards rendered: 5
 [shot] _viewer_shots\03-agent-trace.png
+[ui] after pause: runState=paused
+[ui] step nav: start=182 sheetPrev=181 prevBtn=180 sheetNext=181
+[shot] _viewer_shots\05-step-nav.png
+[ui] after resume: runState=running
 [ui] stop-confirm modal open: true
 [shot] _viewer_shots\04-confirm-modal.png
-[ui] after pause: runState=paused
-[ui] after resume: runState=running
 
 PASS — viewer driven over CDP. Screenshots in _viewer_shots
 ```
 
 Screenshots land in `_viewer_shots/` (phone-sized, 430×932 @2x):
-`01-graph.png` (graph), `02-vertex-state.png` (agent selected, state tab),
-`03-agent-trace.png` (Trace tab — collapsible system/user/assistant/tool cards),
-`04-confirm-modal.png` (the Stop "Are you sure?" modal). The driver also
-exercises the operator controls: it opens + cancels the Stop modal and does a
-pause→resume round-trip (leaving the run running). **Open the PNGs and confirm
-they aren't blank** before claiming success.
+`01-graph.png` (graph + transport ‹ ›), `02-vertex-state.png` (agent selected,
+state tab), `03-agent-trace.png` (Trace tab — collapsible cards),
+`05-step-nav.png` (in-sheet ‹ step N / M › nav, paused), `04-confirm-modal.png`
+(the Stop "Are you sure?" modal). The driver also exercises the controls: it
+pauses, steps through history with the in-sheet and transport arrows (asserting
+the step index moves), resumes, and opens + cancels the Stop modal. **Open the
+PNGs and confirm they aren't blank** before claiming success.
 
 ## Inspect the JSON API directly (no browser)
 

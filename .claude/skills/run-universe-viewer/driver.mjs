@@ -153,6 +153,32 @@ async function main() {
     const cards = await evalJs("document.querySelectorAll('#sheetBody .msg').length");
     console.log(`[ui] trace cards rendered: ${cards}`);
     await shot("03-agent-trace.png");
+
+    // 6b. Freeze the run (also verifies Pause), then deterministically step
+    // through history with the in-sheet ‹ › and transport ‹ › arrows.
+    await evalJs("document.getElementById('pauseBtn').click()");
+    await sleep(500);
+    const paused = await evalJs("document.getElementById('runState').textContent");
+    console.log(`[ui] after pause: runState=${paused}`);
+    await evalJs("setTab('state')");
+    const c0 = await evalJs("App.cur");
+    await evalJs("document.getElementById('sheetPrev').click()");
+    await sleep(250);
+    const c1 = await evalJs("App.cur");
+    await evalJs("document.getElementById('prevBtn').click()");
+    await sleep(250);
+    const c2 = await evalJs("App.cur");
+    await evalJs("document.getElementById('sheetNext').click()");
+    await sleep(250);
+    const c3 = await evalJs("App.cur");
+    console.log(`[ui] step nav: start=${c0} sheetPrev=${c1} prevBtn=${c2} sheetNext=${c3}`);
+    if (!(c1 === c0 - 1 && c2 === c1 - 1 && c3 === c2 + 1)) throw new Error("step arrows did not move as expected");
+    await shot("05-step-nav.png");
+    // Resume (verifies the toggle back to running).
+    await evalJs("document.getElementById('pauseBtn').click()");
+    await sleep(400);
+    const resumed = await evalJs("document.getElementById('runState').textContent");
+    console.log(`[ui] after resume: runState=${resumed}`);
   }
 
   // 7. Operator controls: open the "Are you sure?" stop modal, screenshot, cancel.
@@ -163,16 +189,6 @@ async function main() {
   await shot("04-confirm-modal.png");
   await evalJs("document.getElementById('modalCancel').click()");
   await sleep(200);
-
-  // 8. Pause + resume round-trip via the real buttons (leaves it running).
-  await evalJs("document.getElementById('pauseBtn').click()");
-  await sleep(600);
-  const paused = await evalJs("document.getElementById('runState').textContent");
-  console.log(`[ui] after pause: runState=${paused}`);
-  await evalJs("document.getElementById('pauseBtn').click()");
-  await sleep(400);
-  const resumed = await evalJs("document.getElementById('runState').textContent");
-  console.log(`[ui] after resume: runState=${resumed}`);
 
   // 9. Report and tear down the browser (leaves the python server untouched).
   console.log(`\nPASS — viewer driven over CDP. Screenshots in ${OUTDIR}`);
