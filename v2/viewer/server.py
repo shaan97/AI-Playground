@@ -230,6 +230,7 @@ def serve_gds(
         target = save_dir or f"runs/run-{time.strftime('%Y%m%d-%H%M%S')}"
         try:
             path = save_run(gds, target)
+            hub.save_traces(target)  # persist agent reasoning alongside the trajectory
             print(f"  Saved run -> {path}  (resume with --resume {path})")
             return str(path)
         except Exception as exc:  # saving must never crash shutdown

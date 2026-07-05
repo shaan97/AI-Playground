@@ -143,6 +143,31 @@ class ViewerHub:
             messages = self._traces.get(step, {}).get(vertex)
         return {"step": step, "vertex": vertex, "messages": messages or []}
 
+    # ------------------------------------------------------------- persistence
+
+    def save_traces(self, directory) -> "Path":
+        """Write every captured agent turn to ``transcripts.jsonl``.
+
+        The hub is the only place an agent's per-turn reasoning lives (the
+        substrate persists only configurations), so a saved run is only fully
+        analysable if its transcripts are written out alongside the trajectory.
+        One JSON line per ``(step, agent)`` turn: ``{"step", "agent", "messages"}``.
+        """
+        from pathlib import Path
+        d = Path(directory)
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / "transcripts.jsonl"
+        with self._lock:
+            rows = [
+                {"step": step, "agent": vertex, "messages": messages}
+                for step in sorted(self._traces)
+                for vertex, messages in sorted(self._traces[step].items())
+            ]
+        with path.open("w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return path
+
     # ------------------------------------------------------------- subscriptions
 
     def subscribe(self) -> queue.Queue:

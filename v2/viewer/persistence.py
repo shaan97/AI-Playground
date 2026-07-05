@@ -15,6 +15,7 @@ concrete: save on halt, reload any snapshot later, keep stepping.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -22,7 +23,27 @@ from gds import Configuration, GraphDynamicalSystem, Trajectory
 from gds.kernel import LocalKernel
 
 TRAJECTORY_FILE = "trajectory.jsonl"
+TRANSCRIPTS_FILE = "transcripts.jsonl"
 RUN_FILE = "run.json"
+STATUS_FILE = "status.json"
+KERNELS_FILE = "kernels.json"
+
+
+def _local_kernel_map(gds: GraphDynamicalSystem) -> dict:
+    """``{vertex: {"code", "error"}}`` for every runtime-created LocalKernel.
+
+    Genesis kernels (agents, registry, scripted objects) are omitted — only the
+    author-written objects the substrate mints at runtime carry recoverable code.
+    ``error`` is the object's most recent transition failure (``None`` if its last
+    step ran cleanly): the single most useful signal when an object looks inert in
+    the viewer — an object whose code keeps raising silently holds its state, so
+    surfacing the error explains "why isn't this updating?".
+    """
+    return {
+        v: {"code": k.code, "error": getattr(k, "last_error", None)}
+        for v, k in gds.kernels.items()
+        if isinstance(k, LocalKernel)
+    }
 
 
 def save_run(gds: GraphDynamicalSystem, directory: str | Path) -> Path:
@@ -43,6 +64,92 @@ def save_run(gds: GraphDynamicalSystem, directory: str | Path) -> Path:
     }
     (d / RUN_FILE).write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return d
+
+
+class RunWriter:
+    """Append a run's trajectory + transcripts + status to a directory as it runs.
+
+    Where :func:`save_run` writes a finished run all at once, this streams: one
+    trajectory line and (if any) transcript rows per step, plus a ``status.json``
+    heartbeat. That is what lets the control plane *tail* a live run — a run
+    directory that is still growing — with the same reader it uses for archives.
+
+    A worker owns its ``status.json`` while running: it writes ``running`` /
+    ``paused`` heartbeats each step and a terminal ``done`` / ``stopped`` /
+    ``crashed`` on exit.
+    """
+
+    def __init__(self, directory: str | Path):
+        self.dir = Path(directory)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.traj = self.dir / TRAJECTORY_FILE
+        self.transcripts = self.dir / TRANSCRIPTS_FILE
+
+    def genesis(self, gds: GraphDynamicalSystem) -> None:
+        """Start fresh files and record the genesis configuration (step 0)."""
+        self.traj.write_text("", encoding="utf-8")
+        self.transcripts.write_text("", encoding="utf-8")
+        self._append_config(gds.config)
+        self._write_kernels(gds)
+        self.set_status("running", step=getattr(gds, "step_index", 0))
+
+    def _append_config(self, config: Configuration) -> None:
+        with self.traj.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(config.to_dict(), ensure_ascii=False) + "\n")
+
+    def _write_kernels(self, gds: GraphDynamicalSystem) -> None:
+        """Snapshot the code + latest error of every runtime-created object, so a
+        *live* run can be inspected (run.json's copy is only written on finish).
+        Rewritten in full each step — the map is small and objects' errors change."""
+        (self.dir / KERNELS_FILE).write_text(
+            json.dumps(_local_kernel_map(gds), ensure_ascii=False), encoding="utf-8")
+
+    def record_step(self, gds: GraphDynamicalSystem, traces: dict[str, list]) -> None:
+        """Append this step's configuration and any agent turns, then heartbeat."""
+        step = getattr(gds, "step_index", 0)
+        self._append_config(gds.config)
+        if traces:
+            with self.transcripts.open("a", encoding="utf-8") as f:
+                for agent, messages in sorted(traces.items()):
+                    f.write(json.dumps({"step": step, "agent": agent,
+                                        "messages": messages}, ensure_ascii=False) + "\n")
+        self._write_kernels(gds)
+        self.set_status("running", step=step)
+
+    def set_status(self, state: str, *, step: int | None = None,
+                   error: str | None = None) -> None:
+        path = self.dir / STATUS_FILE
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = {}
+        d["state"] = state
+        if step is not None:
+            d["step"] = step
+        d["pid"] = os.getpid()
+        d["heartbeat"] = time.time()
+        d.setdefault("started_at", time.time())
+        d["error"] = error
+        path.write_text(json.dumps(d), encoding="utf-8")
+
+    def finish(self, gds: GraphDynamicalSystem, state: str = "done",
+               error: str | None = None) -> None:
+        """Write terminal status and fold run metadata (registry + runtime-created
+        kernel code) into run.json, so the run stays resumable — without dropping
+        the launch spec the manager wrote there."""
+        path = self.dir / RUN_FILE
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        meta["steps"] = getattr(gds, "step_index", meta.get("steps", 0))
+        meta["registry"] = getattr(gds, "registry", meta.get("registry"))
+        meta["local_kernels"] = {
+            v: k.code for v, k in gds.kernels.items() if isinstance(k, LocalKernel)
+        }
+        meta["saved_at"] = time.time()
+        path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        self.set_status(state, step=getattr(gds, "step_index", None), error=error)
 
 
 def load_trajectory(directory: str | Path) -> Trajectory:

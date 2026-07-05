@@ -1,10 +1,77 @@
-# Universe viewer
+# Universe viewer & control plane
 
-A phone-first web viewer for the v2 graph dynamical substrate. Watch a
-`GraphDynamicalSystem` evolve **live** (or scrub its **history**): see the graph,
-tap a vertex to inspect its state and neighbourhood, and read an agent's per-turn
-**trace**. Zero dependencies (stdlib `http.server` + Cytoscape.js from a CDN). The
-viewer only *observes* the world — it never changes its dynamics.
+A phone-first website for the v2 graph dynamical substrate. Zero dependencies
+(stdlib `http.server` + Cytoscape.js from a CDN). Two ways to use it:
+
+1. **The control plane** (`v2/serve.py`) — one long-lived server that outlives
+   any run: browse every experiment, watch live ones, read whole trajectories,
+   and **launch new experiments from the browser**.
+2. **The single-run viewer** (`serve_gds`) — bolt a viewer onto one in-process
+   run, as before (still used by `gemma_world.py --viewer`).
+
+Either way the viewer only *observes* the world — it never changes its dynamics;
+operator control (pause/stop) acts strictly *between* steps.
+
+## The control plane
+
+```bash
+python v2/serve.py                     # serves <repo>/runs on :8000
+python v2/serve.py --port 8010 --max-concurrent 2
+```
+
+**Everything is a run directory.** `runs/<id>/` holds `trajectory.jsonl` (one
+configuration per step), `transcripts.jsonl` (one row per agent turn),
+`kernels.json` (`{vertex: {code, error}}` for every runtime-created object, so
+the viewer can show an object's source and its latest transition error),
+`run.json` (launch spec + resume metadata) and `status.json`
+(queued/running/paused/done/stopped/crashed + heartbeat). A *live* run is just a
+directory that is still growing — the server tails it over SSE; an archived run
+is read by the same code. The server is restart-tolerant: on startup it
+re-enqueues `queued` runs and marks stale `running` ones `crashed`.
+
+**Pages:**
+
+- **Runs index** (`#/`) — a gallery of every run: status badge, steps, world
+  config, agents. Plus **＋ New experiment**.
+- **Run view** (`#/run/<id>`) — the familiar graph: scrub history, follow live,
+  tap a vertex for state/neighbourhood/per-step trace, pause/stop the run.
+- **Trajectory** (`#/run/<id>/trajectory`) — an agent's **whole run as one
+  scrollable transcript**: the system prompt once, then per step its
+  observations, reasoning (shown italic), tool calls and tool results. Tap a
+  step divider to jump to that step in the graph.
+
+**Launcher.** The form maps onto `examples/gemma_world.py`'s flags: world kind
+(`demo` = model-free scripted world, `gemma` = real Ollama agents), model, #
+agents, prompt level L0–L4 or a custom system prompt, bare/continuous, steps,
+delay. Launching spawns a **worker subprocess** (`python -m viewer.worker
+<run_dir>`) supervised by a pool (`JobManager`, default 3 concurrent; extra
+launches queue). Workers append to their run dir every step, so you can watch
+live, and honour `control.json` (pause/resume/stop) between steps.
+
+### Control-plane HTTP API
+
+| Endpoint | Returns |
+|---|---|
+| `GET /` | the single-page app |
+| `GET /api/runs` | newest-first run summaries |
+| `POST /api/runs` `{spec}` | launch: `201 {id, status}` |
+| `GET /api/runs/<id>/meta` | `{count, latest, agents, registry, control, status, config}` |
+| `GET /api/runs/<id>/history` | `[{step, states, arcs, traced}, …]` |
+| `GET /api/runs/<id>/step/<i>` | one snapshot |
+| `GET /api/runs/<id>/trace/<i>/<agent>` | that agent's turn at step *i* |
+| `GET /api/runs/<id>/conversation/<agent>` | `{agent, system, turns}` — the whole trajectory |
+| `GET /api/runs/<id>/kernels` | `{vertex: {code, error}}` — runtime-created objects' source + latest error |
+| `GET /api/runs/<id>/stream?from=N` | SSE: `hello`, then `step` / `control` events |
+| `POST /api/runs/<id>/control/pause·resume·stop` | `{state}` |
+
+Tests: `python v2/tests/test_viewer_runs_tdd.py` (read models),
+`test_viewer_app_tdd.py` (HTTP surface), `test_viewer_jobs_tdd.py` (supervisor).
+
+## The single-run viewer (`serve_gds`)
+
+Watch a `GraphDynamicalSystem` evolve **live** (or scrub its **history**): see
+the graph, tap a vertex to inspect its state and neighbourhood, and read an
+agent's per-turn **trace**.
 
 ## Try it (no model needed)
 

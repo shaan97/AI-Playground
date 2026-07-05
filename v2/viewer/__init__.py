@@ -19,10 +19,15 @@ from __future__ import annotations
 
 from .control import RunControl
 from .hub import ViewerHub
-from .persistence import load_trajectory, resume_gds, save_run
+from .persistence import RunWriter, load_trajectory, resume_gds, save_run
+from .runs import RunStore
 from .server import serve_gds, start_server
+
+# `app` (control plane) and `jobs` (supervisor) are imported lazily via their
+# modules to keep this package importable even if a subprocess launch context is
+# unavailable; import them directly: `from viewer.app import serve`.
 
 __all__ = [
     "ViewerHub", "RunControl", "serve_gds", "start_server",
-    "save_run", "load_trajectory", "resume_gds",
+    "save_run", "load_trajectory", "resume_gds", "RunWriter", "RunStore",
 ]
