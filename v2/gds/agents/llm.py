@@ -44,15 +44,50 @@ def _substrate_tool_specs() -> list[dict]:
         }}
 
     return [
-        fn("set_state", "Set your own next state.",
-           {"state": {"type": "object", "description": "Your new state (JSON)."}}, ["state"]),
-        fn("add_arc", "Observe another vertex (add an out-arc from yourself).",
-           {"target": {"type": "string"}}, ["target"]),
-        fn("remove_arc", "Stop observing a vertex.",
-           {"target": {"type": "string"}}, ["target"]),
-        fn("add_vertex", "Create a new vertex with an initial state and behaviour code.",
-           {"state": {"type": "object"}, "code": {"type": "string"},
-            "observes": {"type": "array", "items": {"type": "string"}}}, ["state", "code"]),
+        fn("set_state",
+           "Replace your own state for next turn. This is your only memory AND the "
+           "only thing others can perceive about you: any object observing you reads "
+           "exactly this. The object you pass REPLACES your current state (it is not "
+           "merged), so include everything you want to keep.",
+           {"state": {"type": "object",
+                      "description": "Your full new state as a JSON object."}}, ["state"]),
+        fn("add_arc",
+           "Start observing another object, so its state appears in what you see on "
+           "future turns. `target` is an identifier — e.g. one listed in the "
+           "registry's ledger. Observing is one-way and silent: the target is not "
+           "notified and cannot see you unless it observes you back.",
+           {"target": {"type": "string",
+                       "description": "Identifier of the object to start observing."}},
+           ["target"]),
+        fn("remove_arc",
+           "Stop observing an object you currently observe (its state will no longer "
+           "appear in what you see).",
+           {"target": {"type": "string",
+                       "description": "Identifier of the object to stop observing."}},
+           ["target"]),
+        fn("add_vertex",
+           "Create a new object in the world. You must give it a `name` — a short "
+           "human-readable label (e.g. \"logger\", \"counter\") that becomes its "
+           "identifier, so you and others can find and read it later (a matching or "
+           "similar name is added automatically if yours is already taken). From "
+           "next turn it exists alongside you (discoverable via the registry). Its "
+           "behaviour is `code`: Python source defining a function "
+           "`transition(state, inputs, emit)` that returns the object's next state "
+           "each turn (`state` is its own state, `inputs` maps each observed object "
+           "to its state, and `emit({...})` queues effects like "
+           "{'op':'add_arc','target':...} or {'op':'add_vertex',...}). Only "
+           "math/random/json are available — no imports, files, or network. Return "
+           "None to keep the current state.",
+           {"name": {"type": "string",
+                     "description": "Short human-readable label for the new object "
+                                    "(letters, digits, underscores)."},
+            "state": {"type": "object",
+                      "description": "The new object's initial state (JSON)."},
+            "code": {"type": "string",
+                     "description": "Python source defining transition(state, inputs, emit)."},
+            "observes": {"type": "array", "items": {"type": "string"},
+                         "description": "Identifiers the new object should observe from birth."}},
+           ["name", "state", "code"]),
     ]
 
 
@@ -65,6 +100,16 @@ class LLMKernel(TransitionKernel):
         system: optional system-prompt string (a default is used otherwise).
         max_rounds: max model calls per `evaluate` (loop cap).
         tools: optional private tools, ``{name: {"spec": ..., "handler": ...}}``.
+        continuous: if True (default), the kernel keeps ONE running conversation
+            across steps — each step appends the new render and the agent's replies
+            to the same message list, so the agent remembers prior turns directly
+            (memory in the dialogue, as a normal chat agent). If False, every step
+            is a fresh conversation reconstructed only from the vertex's own state
+            (the substrate's stateless-between-turns default). The prompt is built
+            here on the *client* side, so this continuity is the kernel's choice,
+            not a substrate property. NB: continuous history is hidden kernel state
+            not stored in the Configuration, so it is lost on record-replay/resume,
+            and it grows each step (watch the model's context window on long runs).
     """
 
     def __init__(
@@ -75,11 +120,16 @@ class LLMKernel(TransitionKernel):
         max_rounds: int = 6,
         tools: PrivateTools | None = None,
         recorder: Callable[[list], None] | None = None,
+        continuous: bool = True,
     ):
         self.chat = chat
         self.system = system
         self.max_rounds = max_rounds
         self.tools = dict(tools or {})
+        self.continuous = continuous
+        # The running conversation when continuous=True; spans the kernel's lifetime
+        # (one per agent vertex, reused every step). Empty until the first turn.
+        self._history: list = []
         # Optional sink for the per-turn transcript (the `messages` list). Purely
         # observational — it never affects what the agent does or returns, so the
         # substrate's semantics are unchanged whether or not one is attached. The
@@ -112,10 +162,20 @@ class LLMKernel(TransitionKernel):
         # (lets a caller hand the agent essentially nothing). A non-empty string
         # is used verbatim.
         system = DEFAULT_SYSTEM if self.system is None else self.system
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": self._render(state, inputs)})
+        # Continuous: continue the one running conversation (append this step's
+        # render as the next user turn). Fresh: rebuild from system + render only.
+        if self.continuous and self._history:
+            messages = self._history
+            turn_start = len(messages)
+            messages.append({"role": "user", "content": self._render(state, inputs)})
+        else:
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": self._render(state, inputs)})
+            turn_start = 0
+            if self.continuous:
+                self._history = messages  # seed the running conversation
         tool_specs = self._tool_specs()
 
         next_state = state
@@ -152,9 +212,11 @@ class LLMKernel(TransitionKernel):
                 messages.append({"role": "tool", "tool_call_id": cid, "content": result["content"]})
 
         if self.recorder is not None:
-            # Best-effort: a broken sink must never break the agent's turn.
+            # Best-effort: a broken sink must never break the agent's turn. Record
+            # only THIS turn's messages (the slice added this step) so per-step
+            # transcripts stay per-step even when the conversation is continuous.
             try:
-                self.recorder(messages)
+                self.recorder(messages[turn_start:])
             except Exception:
                 pass
 
@@ -165,27 +227,52 @@ class LLMKernel(TransitionKernel):
         tools run their handler. Returns {"content": <feedback>, optionally
         "state": <new next_state>}."""
         if name == "set_state":
-            return {"content": "ok", "state": args["state"]} if "state" in args else {"content": "ok"}
+            if "state" not in args:
+                return {"content": "error: set_state requires 'state' parameter (your new state as JSON)"}
+            state = args["state"]
+            if not isinstance(state, dict):
+                return {"content": f"error: 'state' must be a JSON object, not {type(state).__name__}"}
+            return {"content": "ok", "state": state}
         if name == "add_arc":
             target = args.get("target")
-            if target is not None:
-                updates.append(AddArc(target))
+            if target is None or not isinstance(target, str):
+                return {"content": "error: add_arc requires 'target' parameter (a vertex identifier string)"}
+            updates.append(AddArc(target))
             return {"content": "ok"}
         if name == "remove_arc":
             target = args.get("target")
-            if target is not None:
-                updates.append(RemoveArc(target))
+            if target is None or not isinstance(target, str):
+                return {"content": "error: remove_arc requires 'target' parameter (a vertex identifier string)"}
+            updates.append(RemoveArc(target))
             return {"content": "ok"}
         if name == "add_vertex":
+            if "state" not in args:
+                return {"content": "error: add_vertex requires 'state' parameter (the new vertex's initial state as JSON)"}
+            if "code" not in args:
+                return {"content": "error: add_vertex requires 'code' parameter (Python source defining transition(state, inputs, emit))"}
+            code = args["code"]
+            if not isinstance(code, str):
+                return {"content": f"error: 'code' must be a string, not {type(code).__name__}"}
+            observes = args.get("observes", [])
+            if not isinstance(observes, list):
+                return {"content": f"error: 'observes' must be an array of vertex identifiers, not {type(observes).__name__}"}
+            try:
+                out_arcs = frozenset(observes)
+            except TypeError:
+                return {"content": "error: 'observes' must contain only strings (vertex identifiers)"}
+            name = args.get("name")
+            if name is None or not isinstance(name, str) or not name.strip():
+                return {"content": "error: add_vertex requires 'name' parameter (a short human-readable label for the new object, e.g. \"logger\")"}
             updates.append(AddVertex(
                 initial_state=args.get("state", {}),
-                kernel=LocalKernel(args.get("code", "")),
-                out_arcs=frozenset(args.get("observes", [])),
+                kernel=LocalKernel(code),
+                out_arcs=out_arcs,
+                name=name,
             ))
-            return {"content": "ok"}
+            return {"content": f"ok — creating object named {name!r} (its exact id may be suffixed if the name is taken; check the registry next turn)"}
         if name in self.tools:
             try:
                 return {"content": str(self.tools[name]["handler"](args))}
             except Exception as exc:  # private tool failure is reported, not fatal
                 return {"content": f"error: {exc!r}"}
-        return {"content": f"error: unknown tool {name!r}"}
+        return {"content": f"error: unknown tool '{name}' (available: set_state, add_arc, remove_arc, add_vertex)"}

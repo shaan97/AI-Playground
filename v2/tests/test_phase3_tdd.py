@@ -148,6 +148,7 @@ def test_add_vertex_effect():
     code = "def transition(state, inputs):\n    return state\n"
     chat = ScriptedChat([
         assistant(tool_calls=[tool_call("add_vertex", {
+            "name": "child",
             "state": {"born": True},
             "code": code,
             "observes": ["A"],
@@ -163,6 +164,7 @@ def test_add_vertex_effect():
     assert isinstance(av.kernel, LocalKernel), f"kernel should be LocalKernel, got {type(av.kernel)}"
     assert av.initial_state == {"born": True}, f"initial_state={av.initial_state!r}"
     assert "A" in set(av.out_arcs), f"out_arcs should include A, got {av.out_arcs!r}"
+    assert av.name == "child", f"name hint should be carried, got {av.name!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +174,7 @@ def test_add_vertex_end_to_end_registry():
     code = "def transition(state, inputs):\n    return state\n"
     chat = ScriptedChat([
         assistant(tool_calls=[tool_call("add_vertex", {
+            "name": "child",
             "state": {"born": True},
             "code": code,
             "observes": [],
@@ -186,6 +189,8 @@ def test_add_vertex_end_to_end_registry():
     registry = install_registry(gds)
     gds.step()
     verts = set(gds.config.digraph.vertices())
+    # The agent named its child; the engine should use that as the label.
+    assert "child" in verts, f"named child 'child' should exist, got {verts!r}"
     # Originals plus the registry plus exactly one minted child.
     minted = [v for v in verts if v not in ("A",) and v != registry]
     assert len(minted) == 1, f"expected exactly one minted child, got {minted!r} (all={verts!r})"
@@ -326,9 +331,10 @@ def test_isinstance_transition_kernel():
 # Test 10: integration -> agent observes a vertex it didn't create
 # ---------------------------------------------------------------------------
 def test_integration_agent_observes_child():
-    # Creator: makes exactly one child on its first step, then idles.
+    # Creator: makes exactly one named child on its first step, then idles.
     creator_chat = ScriptedChat([
         assistant(tool_calls=[tool_call("add_vertex", {
+            "name": "widget",
             "state": {"kind": "child"},
             "code": "def transition(state, inputs):\n    return state\n",
             "observes": [],
@@ -336,18 +342,19 @@ def test_integration_agent_observes_child():
     ] + [assistant(content="idle")] * 20)
     creator = LLMKernel(creator_chat)
 
-    # Agent: robustly tries to add_arc to any id it can find in its inputs,
-    # except itself and ids it already observes. Reads the stringified inputs.
+    # Agent: discovers what exists by reading the registry's ledger (a list of
+    # identifiers), then observes each — id-shape-agnostic, so it works whether
+    # labels are opaque (v1) or named (widget). Skips itself and the registry.
     class GreedyAgent:
         def __call__(self, messages, tools):
-            # Find candidate vertex ids mentioned anywhere in the messages.
-            blob = json.dumps(messages, default=str)
-            calls = []
-            # Look for minted-style ids ("v1", "v2", ...) and known names.
             import re
-            ids = set(re.findall(r'"(v\d+)"', blob))
-            ids |= set(re.findall(r'\b(v\d+)\b', blob))
-            for vid in sorted(ids):
+            ids = set()
+            for m in messages:
+                content = str(m.get("content") or "") if isinstance(m, dict) else ""
+                for ledger in re.findall(r'"ledger"\s*:\s*\[([^\]]*)\]', content):
+                    ids |= set(re.findall(r'"([^"]+)"', ledger))
+            calls = []
+            for vid in sorted(ids - {"agent", "registry"}):
                 calls.append(tool_call("add_arc", {"target": vid}, cid="g" + vid))
             if calls:
                 return assistant(tool_calls=calls)
@@ -366,12 +373,11 @@ def test_integration_agent_observes_child():
     gds.run(10)
 
     verts = set(gds.config.digraph.vertices())
-    minted = [v for v in verts if v.startswith("v")]
-    assert minted, f"creator should have minted a child, vertices={verts!r}"
-    child = minted[0]
+    # The creator named its child "widget"; the engine uses the name as the label.
+    assert "widget" in verts, f"creator should have minted the named child, vertices={verts!r}"
     out_agent = set(gds.config.digraph.out_neighbours("agent"))
-    assert child in out_agent, (
-        f"agent should end up observing child {child!r}; out(agent)={out_agent!r}"
+    assert "widget" in out_agent, (
+        f"agent should end up observing child 'widget'; out(agent)={out_agent!r}"
     )
 
 

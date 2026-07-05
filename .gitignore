@@ -3,5 +3,8 @@ __pycache__/
 .venv/
 world_data/
 agent-workspaces/
-_viewer_shots/
+# scratch screenshot / throwaway run dirs (leading-underscore convention)
+_*_shots/
+_L4_*/
+_bare_*/
 runs/

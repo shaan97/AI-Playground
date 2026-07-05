@@ -16,6 +16,7 @@ One step:
 
 from __future__ import annotations
 
+import re
 from typing import Mapping
 
 from . import topology
@@ -46,15 +47,48 @@ class GraphDynamicalSystem:
         self.step_index = 0
         self.trajectory = Trajectory([config])
         self._counter = 0
+        # Every label this engine has ever minted. Guards against reusing a label
+        # for a second vertex *within the same step* (created vertices are not
+        # folded into self.config/self.kernels until the step's topology pass
+        # finishes) as well as across steps.
+        self._minted: set[Vertex] = set()
 
     # ----------------------------------------------------------- id allocation
 
-    def _mint(self) -> Vertex:
-        """Mint a fresh, unused vertex label."""
+    @staticmethod
+    def _slugify(hint: str) -> str:
+        """Turn a free-text name hint into a safe, readable label stem (or "")."""
+        slug = re.sub(r"[^0-9A-Za-z]+", "_", hint).strip("_").lower()
+        return slug[:40]
+
+    def _taken(self, label: Vertex) -> bool:
+        return (self.config.digraph.has_vertex(label)
+                or label in self.kernels or label in self._minted)
+
+    def _mint(self, hint: str | None = None) -> Vertex:
+        """Mint a fresh, unused vertex label.
+
+        With a *hint* (an agent-supplied name) the label is a readable slug of it,
+        de-duplicated with a numeric suffix on collision (``logger``, ``logger_2``).
+        Without one — or if the hint slugifies to nothing — fall back to the
+        opaque ``v{n}`` scheme, so allocation never fails.
+        """
+        base = self._slugify(hint) if hint else ""
+        if base:
+            if not self._taken(base):
+                self._minted.add(base)
+                return base
+            i = 2
+            while self._taken(f"{base}_{i}"):
+                i += 1
+            label = f"{base}_{i}"
+            self._minted.add(label)
+            return label
         while True:
             self._counter += 1
             label = f"v{self._counter}"
-            if not self.config.digraph.has_vertex(label) and label not in self.kernels:
+            if not self._taken(label):
+                self._minted.add(label)
                 return label
 
     # -------------------------------------------------------------- one step Φ

@@ -69,7 +69,13 @@ def gemma_agent(
     max_rounds: int = 6,
     tools: dict | None = None,
     options: dict | None = None,
+    continuous: bool = True,
 ) -> LLMKernel:
-    """Build an `LLMKernel` (a vertex) backed by a local Gemma 4 via Ollama."""
+    """Build an `LLMKernel` (a vertex) backed by a local Gemma 4 via Ollama.
+
+    ``continuous`` (default True) keeps one running conversation across steps; pass
+    False for the substrate's fresh-conversation-per-step behaviour. See `LLMKernel`.
+    """
     chat = partial(ollama_chat, model=model, url=url, options=options)
-    return LLMKernel(chat, system=system, max_rounds=max_rounds, tools=tools)
+    return LLMKernel(chat, system=system, max_rounds=max_rounds, tools=tools,
+                     continuous=continuous)

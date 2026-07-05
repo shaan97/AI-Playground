@@ -123,5 +123,6 @@ class LocalKernel(TransitionKernel):
                     initial_state=e.get("state", {}),
                     kernel=LocalKernel(e.get("code", "")),
                     out_arcs=frozenset(e.get("observes", [])),
+                    name=e.get("name"),
                 ))
         return Step(res.next_state, tuple(updates))

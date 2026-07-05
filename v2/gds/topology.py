@@ -55,11 +55,19 @@ class RemoveArc(TopologyUpdate):
 class AddVertex(TopologyUpdate):
     """Create a new vertex with an initial state, a kernel (its behaviour), and
     initial out-arcs (what the newcomer will observe). The engine mints its
-    label and applies registry coupling."""
+    label and applies registry coupling.
+
+    *name* is an optional human-readable hint for the label: the engine slugifies
+    it into a readable, unique identifier (``logger``, ``logger_2``, …) instead of
+    an opaque ``v1``. It is only a hint — the engine still owns label allocation
+    and falls back to a minted ``v{n}`` when *name* is absent or unusable, so the
+    substrate never crashes on a missing/duplicate name.
+    """
 
     initial_state: State
     kernel: "TransitionKernel"
     out_arcs: frozenset[Vertex] = field(default_factory=frozenset)
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,7 +92,7 @@ def apply(
     actor: Vertex,
     updates,
     *,
-    mint: Callable[[], Vertex],
+    mint: Callable[..., Vertex],
     registry: Vertex | None = None,
     limits=None,
     creations_remaining: int | None = None,
@@ -119,7 +127,7 @@ def apply(
                 continue  # total-vertex cap reached — drop
             if creations_remaining is not None and len(created) >= creations_remaining:
                 continue  # per-step creation budget exhausted — drop
-            w = mint()
+            w = mint(u.name)
             dg = dg.with_vertex(w, u.out_arcs)
             new_states[w] = u.initial_state
             new_kernels[w] = u.kernel
