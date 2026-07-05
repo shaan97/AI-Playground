@@ -33,6 +33,7 @@ from gds import (  # noqa: E402
     GraphDynamicalSystem,
     Limits,
     Step,
+    TransitionKernel,
 )
 
 _PASS = 0
@@ -60,9 +61,11 @@ def spawner(state, inputs):
 
 
 def arc_grower(state, inputs):
-    """Adds an arc to a fresh distinct target every step (out-degree grows)."""
+    """Adds an arc to a real target each step, cycling over t0..t2 so out-degree
+    grows toward the cap. Targets must exist (arcs are A ⊆ V×V), so the config
+    that uses this fixture provides t0..t2."""
     i = state.get("i", 0)
-    return Step({"i": i + 1}, (AddArc(f"t{i}"),))
+    return Step({"i": i + 1}, (AddArc(f"t{i % 3}"),))
 
 
 # ----------------------------------------------------------------- Limits type
@@ -96,9 +99,18 @@ def test_no_limit_grows_unbounded():
 # ------------------------------------------------------------- max_out_degree
 
 def test_max_out_degree_cap():
-    config = Configuration(Digraph.of({"a": []}), {"a": {"i": 0}})
-    gds = GraphDynamicalSystem(config, {"a": FunctionKernel(arc_grower)},
-                               limits=Limits(max_out_degree=2))
+    # t0..t2 exist so the arcs are legal; the out-degree cap (not existence) is
+    # what limits growth.
+    config = Configuration(
+        Digraph.of({"a": [], "t0": [], "t1": [], "t2": []}),
+        {"a": {"i": 0}, "t0": {}, "t1": {}, "t2": {}},
+    )
+    gds = GraphDynamicalSystem(
+        config,
+        {"a": FunctionKernel(arc_grower),
+         **{t: FunctionKernel(idle) for t in ("t0", "t1", "t2")}},
+        limits=Limits(max_out_degree=2),
+    )
     gds.run(10)
     check("max_out_degree caps out-arcs", gds.config.digraph.out_degree("a") == 2)
 
@@ -145,6 +157,69 @@ def test_overbudget_does_not_crash_and_keeps_running():
     check("over-budget updates dropped without crashing", len(gds.config.vertices()) == 2)
 
 
+# ------------------------------------------ arc existence invariant (A ⊆ V×V)
+
+class _ArcThenWatch(TransitionKernel):
+    """Emits an add_arc to `target` on its first step, then idles. Records any
+    feedback the engine delivers via its `notify` hook."""
+
+    def __init__(self, target):
+        self.target = target
+        self.notices: list = []
+        self._acted = False
+
+    def notify(self, reasons):
+        self.notices.extend(reasons)
+
+    def evaluate(self, state, inputs):
+        if not self._acted:
+            self._acted = True
+            return Step(state, (AddArc(self.target),))
+        return Step(state)
+
+
+def test_add_arc_to_missing_vertex_refused():
+    gds = GraphDynamicalSystem(
+        Configuration(Digraph.of({"a": []}), {"a": {}}), {"a": _ArcThenWatch("ghost")})
+    gds.step()  # 'a' tries to observe 'ghost', which does not exist
+    check("arc to non-existent vertex is not created",
+          "ghost" not in gds.config.digraph.out_neighbours("a"))
+
+
+def test_arc_to_existing_vertex_still_works():
+    k = _ArcThenWatch("b")
+    gds = GraphDynamicalSystem(
+        Configuration(Digraph.of({"a": [], "b": []}), {"a": {}, "b": {}}),
+        {"a": k, "b": FunctionKernel(idle)})
+    gds.step()
+    check("arc to existing vertex is created (no refusal)",
+          "b" in gds.config.digraph.out_neighbours("a") and k.notices == [])
+
+
+def test_refusal_propagates_upward_to_kernel():
+    k = _ArcThenWatch("ghost")
+    gds = GraphDynamicalSystem(
+        Configuration(Digraph.of({"a": []}), {"a": {}}), {"a": k})
+    gds.step()   # emit the bad arc; refusal is queued, not yet delivered
+    before = list(k.notices)
+    gds.step()   # engine delivers the refusal to k.notify before 'a' acts again
+    check("refusal is delivered on the next turn, naming the missing target",
+          before == [] and any("ghost" in str(n) for n in k.notices))
+
+
+def test_newborn_observe_arc_to_missing_is_filtered():
+    def spawn_child(state, inputs):
+        child = AddVertex(initial_state={}, kernel=FunctionKernel(idle),
+                          out_arcs=frozenset({"a", "ghost"}), name="child")
+        return Step(state, (child,))
+    gds = GraphDynamicalSystem(
+        Configuration(Digraph.of({"a": []}), {"a": {}}), {"a": FunctionKernel(spawn_child)})
+    gds.step()
+    outs = gds.config.digraph.out_neighbours("child")
+    check("newborn keeps its real observe-arc and drops the non-existent one",
+          "a" in outs and "ghost" not in outs)
+
+
 if __name__ == "__main__":
     test_limits_defaults_unlimited()
     test_max_vertices_cap()
@@ -153,5 +228,9 @@ if __name__ == "__main__":
     test_max_creations_per_step()
     test_creations_budget_resets_each_step()
     test_overbudget_does_not_crash_and_keeps_running()
+    test_add_arc_to_missing_vertex_refused()
+    test_arc_to_existing_vertex_still_works()
+    test_refusal_propagates_upward_to_kernel()
+    test_newborn_observe_arc_to_missing_is_filtered()
     print(f"\n{_PASS} passed, {_FAIL} failed")
     raise SystemExit(1 if _FAIL else 0)

@@ -53,11 +53,12 @@ def _substrate_tool_specs() -> list[dict]:
                       "description": "Your full new state as a JSON object."}}, ["state"]),
         fn("add_arc",
            "Start observing another object, so its state appears in what you see on "
-           "future turns. `target` is an identifier you can already observe or that "
-           "appears in the registry's ledger — matched exactly (case-sensitive); a "
-           "name that names no such object (or is mis-cased) errors rather than "
-           "silently doing nothing. Observing is one-way and silent: the target is "
-           "not notified and cannot see you unless it observes you back.",
+           "future turns. `target` is an identifier — matched exactly, so use a name "
+           "from the registry's ledger verbatim (names are case-sensitive). The arc "
+           "takes effect next turn; if `target` names no existing object it is "
+           "refused and the world tells you so next turn. Observing is one-way and "
+           "silent: the target is not notified and cannot see you unless it observes "
+           "you back.",
            {"target": {"type": "string",
                        "description": "Identifier of the object to start observing."}},
            ["target"]),
@@ -132,11 +133,28 @@ class LLMKernel(TransitionKernel):
         # The running conversation when continuous=True; spans the kernel's lifetime
         # (one per agent vertex, reused every step). Empty until the first turn.
         self._history: list = []
+        # Substrate feedback about the PREVIOUS turn's effects (e.g. an arc refused
+        # because its target does not exist), queued by `notify` and surfaced to
+        # the model at the start of the next turn so it can self-correct.
+        self._pending_notices: list[str] = []
         # Optional sink for the per-turn transcript (the `messages` list). Purely
         # observational — it never affects what the agent does or returns, so the
         # substrate's semantics are unchanged whether or not one is attached. The
         # viewer uses it to render agent trajectories.
         self.recorder = recorder
+
+    # ---------------------------------------------------------------- feedback
+
+    def notify(self, reasons) -> None:
+        """Receive the engine's report on the PREVIOUS turn's effects.
+
+        The engine calls this before the next `evaluate` when one of this vertex's
+        emitted updates was refused (e.g. an `add_arc` whose target does not
+        exist). The reasons are surfaced to the model on the next turn so it can
+        correct course — closing the loop from the authoritative layer (which owns
+        the object list) back up to the agent.
+        """
+        self._pending_notices.extend(str(r) for r in reasons)
 
     # ------------------------------------------------------------------ prompt
 
@@ -164,34 +182,29 @@ class LLMKernel(TransitionKernel):
         # (lets a caller hand the agent essentially nothing). A non-empty string
         # is used verbatim.
         system = DEFAULT_SYSTEM if self.system is None else self.system
+        # This turn's user message: any substrate feedback about last turn's
+        # refused effects, then the current observation.
+        user_content = self._render(state, inputs)
+        if self._pending_notices:
+            notice = ("The world reports on your last turn:\n"
+                      + "\n".join(f"- {r}" for r in self._pending_notices))
+            user_content = notice + "\n\n" + user_content
+            self._pending_notices = []
         # Continuous: continue the one running conversation (append this step's
         # render as the next user turn). Fresh: rebuild from system + render only.
         if self.continuous and self._history:
             messages = self._history
             turn_start = len(messages)
-            messages.append({"role": "user", "content": self._render(state, inputs)})
+            messages.append({"role": "user", "content": user_content})
         else:
             messages = []
             if system:
                 messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": self._render(state, inputs)})
+            messages.append({"role": "user", "content": user_content})
             turn_start = 0
             if self.continuous:
                 self._history = messages  # seed the running conversation
         tool_specs = self._tool_specs()
-
-        # The identifiers this agent may reference this turn. `observed` = what it
-        # currently observes (its out-neighbours, the keys of `inputs`); `known`
-        # adds every handle listed in any registry ledger it reads (existence, not
-        # nature). Arc tools validate against these so a reference to something
-        # that does not exist — or a mis-cased name — errors rather than silently
-        # dangling. Fixed for the whole turn (topology changes apply after it).
-        obs_map = inputs if isinstance(inputs, dict) else {}
-        observed = set(obs_map.keys())
-        known = set(observed)
-        for st in obs_map.values():
-            if isinstance(st, dict) and isinstance(st.get("ledger"), list):
-                known.update(x for x in st["ledger"] if isinstance(x, str))
 
         next_state = state
         updates: list = []
@@ -222,7 +235,7 @@ class LLMKernel(TransitionKernel):
                                      "content": "error: arguments were not valid JSON"})
                     continue
 
-                result = self._apply(name, args, updates, known, observed)
+                result = self._apply(name, args, updates)
                 next_state = result.get("state", next_state)
                 messages.append({"role": "tool", "tool_call_id": cid, "content": result["content"]})
 
@@ -237,21 +250,17 @@ class LLMKernel(TransitionKernel):
 
         return Step(next_state, tuple(updates))
 
-    def _apply(self, name, args: dict, updates: list,
-               known: set | None = None, observed: set | None = None) -> dict:
+    def _apply(self, name, args: dict, updates: list) -> dict:
         """Handle one tool call. Substrate effects append to `updates`; private
         tools run their handler. Returns {"content": <feedback>, optionally
         "state": <new next_state>}.
 
-        `known` is the set of identifiers this agent may legitimately reference
-        this turn (what it currently observes plus every handle in any registry
-        ledger it reads); `observed` is just what it currently observes. Arc tools
-        validate targets against these — case-sensitively — so a reference to a
-        thing that does not exist (or a mis-cased name) errors instead of silently
-        creating a dangling arc.
+        Note: substrate effects are *requests* applied at the end of the turn, so
+        this only validates their shape. Whether an effect is legal (e.g. an arc's
+        target actually exists) is decided authoritatively by the engine when it
+        applies the update; any refusal is reported back to this kernel via
+        `notify` and surfaced to the model on its next turn.
         """
-        known = set() if known is None else known
-        observed = set() if observed is None else observed
         if name == "set_state":
             if "state" not in args:
                 return {"content": "error: set_state requires 'state' parameter (your new state as JSON)"}
@@ -263,26 +272,12 @@ class LLMKernel(TransitionKernel):
             target = args.get("target")
             if target is None or not isinstance(target, str):
                 return {"content": "error: add_arc requires 'target' parameter (a vertex identifier string)"}
-            if target not in known:
-                return {"content": (
-                    f"error: no object named {target!r} exists that you can observe "
-                    "(names are case-sensitive). You may only observe objects you "
-                    "already observe or that appear in the registry's ledger. "
-                    f"Observable right now: {sorted(known)}. An object created this "
-                    "turn only becomes observable next turn — check the ledger then."
-                )}
             updates.append(AddArc(target))
-            return {"content": "ok"}
+            return {"content": "ok (requested — takes effect next turn if the object exists)"}
         if name == "remove_arc":
             target = args.get("target")
             if target is None or not isinstance(target, str):
                 return {"content": "error: remove_arc requires 'target' parameter (a vertex identifier string)"}
-            if target not in observed:
-                return {"content": (
-                    f"error: you are not observing {target!r} (names are "
-                    "case-sensitive), so there is no arc to remove. You currently "
-                    f"observe: {sorted(observed)}."
-                )}
             updates.append(RemoveArc(target))
             return {"content": "ok"}
         if name == "add_vertex":

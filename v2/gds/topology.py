@@ -37,8 +37,10 @@ class TopologyUpdate:
 class AddArc(TopologyUpdate):
     """Add arc ``actor → target``: "I choose to observe *target*."
 
-    *target* need not exist; an arc to a missing/destroyed vertex simply reads as
-    an empty input (stale arcs are inert).
+    *target* must name a vertex that exists when the update is applied (arcs are
+    ``A ⊆ V×V`` — no dangling arcs). If it does not, `apply` refuses the arc and
+    reports the refusal (see `ApplyResult.rejected`); the engine propagates that
+    back to the actor's kernel. Identifiers are matched exactly (case-sensitive).
     """
 
     target: Vertex
@@ -83,6 +85,10 @@ class ApplyResult:
     states: dict[Vertex, State]
     kernels: dict[Vertex, "TransitionKernel"]
     created: list[Vertex]
+    # Human-readable reasons for updates the actor emitted that were *refused*
+    # (as opposed to silently dropped for being over-budget) — currently arcs to
+    # non-existent vertices. The engine propagates these to the actor's kernel.
+    rejected: list[str] = field(default_factory=list)
 
 
 def apply(
@@ -114,9 +120,19 @@ def apply(
     new_states = dict(states)
     new_kernels = dict(kernels)
     created: list[Vertex] = []
+    rejected: list[str] = []
 
     for u in updates:
         if isinstance(u, AddArc):
+            if not dg.has_vertex(u.target):
+                # Arcs are A ⊆ V×V: refuse (and report) an arc to a vertex that
+                # does not exist, rather than creating a dangling one. Matched
+                # exactly, so a mis-cased name is simply "no such object".
+                rejected.append(
+                    f"add_arc refused: no object named {u.target!r} exists "
+                    f"(names are matched exactly), so the arc was not made."
+                )
+                continue
             if max_out_degree is not None and dg.out_degree(actor) >= max_out_degree:
                 continue  # out-degree cap reached — drop
             dg = dg.with_arc(actor, u.target)
@@ -128,7 +144,16 @@ def apply(
             if creations_remaining is not None and len(created) >= creations_remaining:
                 continue  # per-step creation budget exhausted — drop
             w = mint(u.name)
-            dg = dg.with_vertex(w, u.out_arcs)
+            # A newborn's birth arcs obey the same invariant: keep only those to
+            # vertices that already exist; report any dropped as non-existent.
+            valid_out = frozenset(o for o in u.out_arcs if dg.has_vertex(o))
+            missing = sorted(set(u.out_arcs) - valid_out)
+            if missing:
+                rejected.append(
+                    f"add_vertex {w!r}: dropped observe-arcs to non-existent "
+                    f"objects {missing}."
+                )
+            dg = dg.with_vertex(w, valid_out)
             new_states[w] = u.initial_state
             new_kernels[w] = u.kernel
             created.append(w)
@@ -141,4 +166,4 @@ def apply(
         else:
             raise TypeError(f"unknown topology update: {u!r}")
 
-    return ApplyResult(dg, new_states, new_kernels, created)
+    return ApplyResult(dg, new_states, new_kernels, created, rejected)

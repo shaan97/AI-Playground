@@ -52,6 +52,10 @@ class GraphDynamicalSystem:
         # folded into self.config/self.kernels until the step's topology pass
         # finishes) as well as across steps.
         self._minted: set[Vertex] = set()
+        # Per-vertex feedback about the previous step's refused effects (e.g. an
+        # arc to a non-existent target). Delivered to each vertex's kernel (if it
+        # has a `notify` hook) just before its next evaluate, then cleared.
+        self._pending_feedback: dict[Vertex, list[str]] = {}
 
     # ----------------------------------------------------------- id allocation
 
@@ -101,12 +105,25 @@ class GraphDynamicalSystem:
         # per-step creation-budget allocation do not depend on set hashing — the
         # evolution stays reproducible across processes (state itself is
         # double-buffered, so order never affects what each vertex computes).
+        feedback = self._pending_feedback
+        self._pending_feedback = {}
         next_states = dict(self.config.states)
         emitted: list[tuple[Vertex, tuple]] = []
         for v in sorted(participants):
             kernel = self.kernels.get(v)
             if kernel is None:
                 continue
+            # Deliver last step's refusals to this vertex before it acts, so a
+            # kernel that cares (e.g. an agent) can self-correct. Best-effort: a
+            # notify hook that raises must not break the step.
+            reasons = feedback.get(v)
+            if reasons:
+                notify = getattr(kernel, "notify", None)
+                if callable(notify):
+                    try:
+                        notify(reasons)
+                    except Exception:
+                        pass
             result = kernel.evaluate(self.config.state_of(v), self.observation.observe(self.config, v))
             if result is PENDING:
                 continue  # hold state this step
@@ -129,6 +146,9 @@ class GraphDynamicalSystem:
             digraph, next_states, self.kernels = res.digraph, res.states, res.kernels
             if remaining is not None:
                 remaining -= len(res.created)
+            if res.rejected:
+                # Queue refusals for delivery to the actor on its next turn.
+                self._pending_feedback.setdefault(actor, []).extend(res.rejected)
 
         # (5) Commit and record.
         self.config = Configuration(digraph, next_states)
