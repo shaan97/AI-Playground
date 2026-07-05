@@ -53,9 +53,11 @@ def _substrate_tool_specs() -> list[dict]:
                       "description": "Your full new state as a JSON object."}}, ["state"]),
         fn("add_arc",
            "Start observing another object, so its state appears in what you see on "
-           "future turns. `target` is an identifier — e.g. one listed in the "
-           "registry's ledger. Observing is one-way and silent: the target is not "
-           "notified and cannot see you unless it observes you back.",
+           "future turns. `target` is an identifier you can already observe or that "
+           "appears in the registry's ledger — matched exactly (case-sensitive); a "
+           "name that names no such object (or is mis-cased) errors rather than "
+           "silently doing nothing. Observing is one-way and silent: the target is "
+           "not notified and cannot see you unless it observes you back.",
            {"target": {"type": "string",
                        "description": "Identifier of the object to start observing."}},
            ["target"]),
@@ -178,6 +180,19 @@ class LLMKernel(TransitionKernel):
                 self._history = messages  # seed the running conversation
         tool_specs = self._tool_specs()
 
+        # The identifiers this agent may reference this turn. `observed` = what it
+        # currently observes (its out-neighbours, the keys of `inputs`); `known`
+        # adds every handle listed in any registry ledger it reads (existence, not
+        # nature). Arc tools validate against these so a reference to something
+        # that does not exist — or a mis-cased name — errors rather than silently
+        # dangling. Fixed for the whole turn (topology changes apply after it).
+        obs_map = inputs if isinstance(inputs, dict) else {}
+        observed = set(obs_map.keys())
+        known = set(observed)
+        for st in obs_map.values():
+            if isinstance(st, dict) and isinstance(st.get("ledger"), list):
+                known.update(x for x in st["ledger"] if isinstance(x, str))
+
         next_state = state
         updates: list = []
 
@@ -207,7 +222,7 @@ class LLMKernel(TransitionKernel):
                                      "content": "error: arguments were not valid JSON"})
                     continue
 
-                result = self._apply(name, args, updates)
+                result = self._apply(name, args, updates, known, observed)
                 next_state = result.get("state", next_state)
                 messages.append({"role": "tool", "tool_call_id": cid, "content": result["content"]})
 
@@ -222,10 +237,21 @@ class LLMKernel(TransitionKernel):
 
         return Step(next_state, tuple(updates))
 
-    def _apply(self, name, args: dict, updates: list) -> dict:
+    def _apply(self, name, args: dict, updates: list,
+               known: set | None = None, observed: set | None = None) -> dict:
         """Handle one tool call. Substrate effects append to `updates`; private
         tools run their handler. Returns {"content": <feedback>, optionally
-        "state": <new next_state>}."""
+        "state": <new next_state>}.
+
+        `known` is the set of identifiers this agent may legitimately reference
+        this turn (what it currently observes plus every handle in any registry
+        ledger it reads); `observed` is just what it currently observes. Arc tools
+        validate targets against these — case-sensitively — so a reference to a
+        thing that does not exist (or a mis-cased name) errors instead of silently
+        creating a dangling arc.
+        """
+        known = set() if known is None else known
+        observed = set() if observed is None else observed
         if name == "set_state":
             if "state" not in args:
                 return {"content": "error: set_state requires 'state' parameter (your new state as JSON)"}
@@ -237,12 +263,26 @@ class LLMKernel(TransitionKernel):
             target = args.get("target")
             if target is None or not isinstance(target, str):
                 return {"content": "error: add_arc requires 'target' parameter (a vertex identifier string)"}
+            if target not in known:
+                return {"content": (
+                    f"error: no object named {target!r} exists that you can observe "
+                    "(names are case-sensitive). You may only observe objects you "
+                    "already observe or that appear in the registry's ledger. "
+                    f"Observable right now: {sorted(known)}. An object created this "
+                    "turn only becomes observable next turn — check the ledger then."
+                )}
             updates.append(AddArc(target))
             return {"content": "ok"}
         if name == "remove_arc":
             target = args.get("target")
             if target is None or not isinstance(target, str):
                 return {"content": "error: remove_arc requires 'target' parameter (a vertex identifier string)"}
+            if target not in observed:
+                return {"content": (
+                    f"error: you are not observing {target!r} (names are "
+                    "case-sensitive), so there is no arc to remove. You currently "
+                    f"observe: {sorted(observed)}."
+                )}
             updates.append(RemoveArc(target))
             return {"content": "ok"}
         if name == "add_vertex":

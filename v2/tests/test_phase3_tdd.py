@@ -103,7 +103,9 @@ def test_add_remove_arc_effects():
         assistant(content="done"),
     ])
     k = LLMKernel(chat)
-    result = k.evaluate({}, ())
+    # v9 is discoverable via the registry ledger; v3 is currently observed. Arc
+    # tools validate against these, so both calls are legitimate here.
+    result = k.evaluate({}, {"registry": {"ledger": ["v9"]}, "v3": {"x": 1}})
     assert isinstance(result, Step), f"expected Step, got {type(result)}"
     updates = tuple(result.updates)
     add = [u for u in updates if isinstance(u, AddArc)]
@@ -129,16 +131,56 @@ def test_add_arc_end_to_end():
         assistant(content="done"),
     ])
     actor = LLMKernel(chat)
+    # A observes a registry-shaped vertex whose ledger lists B, so B is a legal
+    # (discoverable) target for A's add_arc. B itself is inert.
     config = Configuration(
-        Digraph.of({"A": set(), "B": set()}),
-        {"A": {}, "B": {"v": 0}},
+        Digraph.of({"A": {"reg"}, "B": set(), "reg": set()}),
+        {"A": {}, "B": {"v": 0}, "reg": {"ledger": ["A", "B"]}},
     )
-    gds = GraphDynamicalSystem(config, {"A": actor, "B": FunctionKernel(lambda s, i: Step(s))})
+    gds = GraphDynamicalSystem(config, {
+        "A": actor,
+        "B": FunctionKernel(lambda s, i: Step(s)),
+        "reg": FunctionKernel(lambda s, i: Step(s)),
+    })
     gds.step()
     out_A = set(gds.config.digraph.out_neighbours("A"))
     out_B = set(gds.config.digraph.out_neighbours("B"))
     assert "B" in out_A, f"A should observe B after add_arc, out(A)={out_A!r}"
     assert "A" not in out_B, f"reverse arc must not appear, out(B)={out_B!r}"
+
+
+# ---------------------------------------------------------------------------
+# Test 3c: add_arc to a non-existent / mis-cased target errors (no dangling arc)
+# ---------------------------------------------------------------------------
+def test_add_arc_unknown_target_errors():
+    # Regression: an agent created 'collector' (ids are minted case-sensitively)
+    # then referenced 'Collector'. That must error, not silently add a dangling
+    # arc to a vertex that does not exist.
+    captured = {}
+
+    class Recorder:
+        def __call__(self, messages, tools):
+            # First turn: try the mis-cased name; then stop.
+            if not captured:
+                captured["done"] = True
+                return assistant(tool_calls=[
+                    tool_call("add_arc", {"target": "Collector"}, cid="m1"),
+                ])
+            return assistant(content="done")
+
+    tool_msgs = []
+    k = LLMKernel(Recorder(), recorder=lambda ms: tool_msgs.extend(ms))
+    # 'collector' exists (in the ledger); 'Collector' does not.
+    result = k.evaluate({}, {"registry": {"ledger": ["collector"]}})
+    assert isinstance(result, Step), f"expected Step, got {type(result)}"
+    adds = [u for u in tuple(result.updates) if isinstance(u, AddArc)]
+    assert adds == [], f"mis-cased target must not create an arc, got {adds!r}"
+    # The agent must have received an actionable error it can self-correct from.
+    tool_contents = " ".join(
+        str(m.get("content", "")) for m in tool_msgs if m.get("role") == "tool"
+    )
+    assert "error" in tool_contents.lower(), f"expected an error message, got {tool_contents!r}"
+    assert "Collector" in tool_contents, "error should name the bad target"
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +350,7 @@ def test_malformed_arguments_skipped():
         assistant(content="done"),
     ])
     k = LLMKernel(chat)
-    result = k.evaluate({}, ())
+    result = k.evaluate({}, {"registry": {"ledger": ["v7"]}})
     assert isinstance(result, Step), f"expected Step, got {type(result)}"
     adds = [u for u in tuple(result.updates) if isinstance(u, AddArc)]
     assert len(adds) == 1, f"malformed call should be skipped; got adds={adds!r}"
@@ -390,6 +432,7 @@ def main():
         ("no_tool_calls", test_no_tool_calls),
         ("add_remove_arc_effects", test_add_remove_arc_effects),
         ("add_arc_end_to_end", test_add_arc_end_to_end),
+        ("add_arc_unknown_target_errors", test_add_arc_unknown_target_errors),
         ("add_vertex_effect", test_add_vertex_effect),
         ("add_vertex_end_to_end_registry", test_add_vertex_end_to_end_registry),
         ("multi_round_private_tool", test_multi_round_private_tool),
