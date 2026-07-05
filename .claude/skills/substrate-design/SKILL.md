@@ -143,6 +143,11 @@ now a property of the graph, not a guard in the agent.
 
 ## See also
 
+- **principled-design** skill (user-global, `~/.claude/skills/principled-design/`) —
+  the project-agnostic philosophy these laws specialize: invariants over guards,
+  truth-ownership, refusal propagation. This skill is that one bound to the GDS
+  substrate's named layers; when in doubt about the *general* move, read that,
+  then come back here for where it lands in `gds/`.
 - `docs/UNIVERSE.md` — the north star / full rationale; `docs/SAFETY-v2.md`.
 - **audit-runs** skill — run + audit a real Gemma world (L9).
 - **run-universe-viewer** skill — watch a run live.
