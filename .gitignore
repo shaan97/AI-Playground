@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 world_data/
 mock_world/
+pixel_arcade/output/*.wav
+pixel_arcade/output/*.video.mp4
+pixel_arcade/output/*_f*.png
