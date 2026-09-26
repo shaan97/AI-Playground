@@ -1,8 +1,10 @@
 """Sound effects, synthesized from scratch. Each returns a mono float array."""
+import zlib
+
 import numpy as np
 
 from .synth import (SR, bandpass, expdecay, highpass, hz, inst_bell, lowpass, midi, noise, pulse, saw, sine,
-                    sweep_lowpass, t_axis, triangle)
+                    sweep_lowpass, t_axis)
 
 
 def _n(sec):
@@ -45,6 +47,8 @@ def _add(a, b, offset=0, gain=1.0):
 def boom(sec=0.5, f0=110, f1=38, noise_amt=1.0, cut0=4000, cut1=300, rate=None, seed=None):
     n = _n(sec)
     t = t_axis(n)
+    if seed is None:   # stable per-recipe seed keeps renders bit-reproducible
+        seed = zlib.crc32(repr((sec, f0, f1, cut0, cut1, rate)).encode())
     rng = np.random.default_rng(seed)
     nz = noise(n, rate, rng=rng)
     nz = sweep_lowpass(nz, cut0, cut1, sec * 0.25) * expdecay(n, sec * 0.3)
@@ -77,7 +81,6 @@ def crt_on(p):
 
 def crt_off(p):
     n = _n(0.8)
-    t = t_axis(n)
     whine = sine(_sweep(6000, 180, 0.8)) * 0.18 * expdecay(n, 0.35)
     pop = np.zeros(n)
     k = _n(0.5)
@@ -115,7 +118,6 @@ def thud(p):
 
 def slam(p):
     n = _n(1.0)
-    t = t_axis(n)
     hit = boom(1.0, 120, 32, 1.0, 6000, 200)
     clang = sum(pulse(np.full(n, f), 0.5) for f in (523.0, 787.0, 1109.0)) * 0.08 * expdecay(n, 0.25)
     return hit * 0.9 + highpass(clang, 400)
@@ -308,7 +310,6 @@ def enemy_shot(p):
 
 def shield(p):
     n = _n(0.08)
-    t = t_axis(n)
     return (sine(np.full(n, 2400.0)) + sine(np.full(n, 3300.0))) * expdecay(n, 0.02) * 0.1
 
 
@@ -338,7 +339,6 @@ def boss_shot(p):
 
 
 def fireball(p):
-    n = _n(0.5)
     return (whoosh(p, 0.5, 200, 1500) * 0.6 + crackle(0.5, 50, 4) * 0.3)
 
 

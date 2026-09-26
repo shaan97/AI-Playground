@@ -3,8 +3,8 @@ import math
 
 from ..backgrounds import Starfield
 from ..engine import W, H, Particles, dither_gradient, ease_in_cubic, star_glint
-from ..palette import (CYAN, DEEP, GOLDEN, GREY, INK, NIGHT, RED, SILVER, SLATE, STEEL, WHITE, YELLOW, LEMON,
-                       NAVY, PLASMA, INDIGO)
+from ..palette import (CYAN, DEEP, GOLDEN, GREY, INK, NIGHT, RED, SILVER, SLATE, STEEL, WHITE, YELLOW, NAVY,
+                       PLASMA)
 from ..scene import Scene, beats
 from ..sprites import COIN
 

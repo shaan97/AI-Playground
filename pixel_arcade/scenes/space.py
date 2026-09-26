@@ -8,17 +8,16 @@ import math
 import numpy as np
 
 from ..backgrounds import Space
-from ..boss import BW, BH, MegaMaw
-from ..engine import (W, H, Particles, Sprite, clamp, ease_in_cubic, ease_in_out, ease_out_back,
-                      ease_out_cubic, lerp, shake_offset, shift_canvas, star_glint)
+from ..boss import MegaMaw
+from ..engine import (W, H, Particles, clamp, ease_in_cubic, ease_in_out, ease_out_back, ease_out_cubic,
+                      lerp, shake_offset, shift_canvas)
 from ..logo import logo_letter
-from ..palette import (AMBER, BLUE, COBALT, CRIMSON, CYAN, DEEP, FIRE, GOLDEN, GREY, ICE, INDIGO, INK, LEMON,
-                       LIME, MAGENTA, NAVY, NEON_PINK, NIGHT, ORANGE, PINK, PLASMA, PURPLE, RAINBOW, RED, ROSE,
-                       SCARLET, SILVER, SKY, SLATE, SMOKE, STEEL, VIOLET, WHITE, YELLOW, GOLD, ORCHID)
+from ..palette import (AMBER, BLUE, CRIMSON, CYAN, DEEP, FIRE, GREY, ICE, INK, LEMON, LIME, MAGENTA, NEON_PINK,
+                       ORANGE, PINK, PLASMA, RAINBOW, RED, ROSE, SCARLET, SILVER, SKY, SMOKE, WHITE, YELLOW)
 from ..procgen import add_outline, asteroid, bevel_shade, poly_mask, sphere
 from ..props import StarCore
 from ..scene import Scene, card, draw_hud
-from ..sprites import CAPSULE, FIGHTER, MINI_SHIP, PLAYER_SHIP
+from ..sprites import CAPSULE, FIGHTER, PLAYER_SHIP
 
 B = 24
 SHMUP_END = 44 * B
@@ -194,7 +193,6 @@ class SpaceBattle(Scene):
         self.enemies[-1]["deadline"] = f + int(3.5 * B)
 
     def waves(self, f):
-        b = f / B
         plan = [
             (4, lambda: self.sine_wave(f, 62, fire_at=70)),
             (8, lambda: self.sine_wave(f, 152, amp=-22, fire_at=70)),
@@ -518,7 +516,6 @@ class SpaceBattle(Scene):
         self.boss_flash = max(0, self.boss_flash - 1)
         # boss mouth laser
         if LASER_FIRE <= f < LASER_END:
-            y0 = my - 11 + 2 * math.sin(f * 0.8)
             self.draw_mouth_laser(cv, f, mx, my)
             self.shake = max(self.shake, 2.5)
             return (my - 13, my + 13)
@@ -620,8 +617,6 @@ class SpaceBattle(Scene):
         # ---------------------------------------------------------- spawns
         if f < SHMUP_END:
             self.waves(f)
-        if f == 2 * B + 12:
-            pass
 
         # ---------------------------------------------------------- shooting
         firing = 2 * B <= f < REVEAL and not (CHARGE <= f < DEATH)
@@ -783,9 +778,8 @@ class SpaceBattle(Scene):
                 self.parts.emit(e["x"] + spr.w, e["y"] + 10 + rng.random() * 10, 1.4, 0, 14, FIRE)
 
         # boss
-        hazard_band = None
         if boss_phase or (FINAL <= f < FINAL + 30):
-            hazard_band = self.update_boss(f, cv)
+            self.update_boss(f, cv)
 
         # capsules
         for c in self.capsules:

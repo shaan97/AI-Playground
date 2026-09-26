@@ -4,8 +4,8 @@ import math
 import numpy as np
 
 from .engine import Sprite
-from .palette import (AMBER, CRIMSON, GREY, INK, LEMON, MAGENTA, ORANGE, PINK, RED, ROSE, SILVER, STEEL,
-                      WHITE, YELLOW, NIGHT, DEEP)
+from .palette import (CRIMSON, GREY, INK, MAGENTA, ORANGE, PINK, RED, ROSE, SILVER, STEEL, WHITE, YELLOW,
+                      NIGHT, DEEP)
 from .procgen import add_outline, bevel_shade, poly_mask, sphere
 
 HULL = [(200, 184, 244), (156, 132, 218), (116, 92, 186), (86, 62, 150), (62, 40, 114), (42, 26, 82), (26, 16, 54)]

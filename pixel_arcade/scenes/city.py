@@ -8,9 +8,9 @@ from ..backgrounds import Starfield
 from ..engine import (W, H, Particles, clamp, dither_gradient, ease_in_cubic, ease_in_out, ease_out_cubic,
                       lerp, shake_offset, shift_canvas, star_glint)
 from ..hero import Hero
-from ..palette import (AMBER, CRIMSON, CYAN, DEEP, FIRE, GOLDEN, GREY, ICE, INDIGO, INK, LEMON, LIME,
-                       MAGENTA, NEON_PINK, NIGHT, ORANGE, PINK, PLASMA, PURPLE, RAINBOW, RED, ROSE, SILVER,
-                       SKY, SLATE, SMOKE, STEEL, TOXIC, VIOLET, WHITE, YELLOW, GREEN, BROWN, RUST, TAN, CREAM)
+from ..palette import (AMBER, CYAN, DEEP, FIRE, GOLDEN, INDIGO, INK, LIME, MAGENTA, NEON_PINK, NIGHT, ORANGE,
+                       PINK, PLASMA, PURPLE, RAINBOW, RED, SILVER, SKY, SMOKE, TOXIC, VIOLET, WHITE,
+                       YELLOW, BROWN, RUST, CREAM)
 from ..procgen import sphere
 from ..props import UFO, StarCore, draw_tower
 from ..scene import Scene, card, draw_hud

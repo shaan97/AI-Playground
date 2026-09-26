@@ -3,8 +3,8 @@ import zlib
 
 import numpy as np
 
-from .engine import FRAMES_PER_BAR, FRAMES_PER_BEAT, W, H, Canvas, font
-from .palette import CYAN, INK, LEMON, RED, WHITE, YELLOW, SILVER, PINK, GREY
+from .engine import FRAMES_PER_BAR, FRAMES_PER_BEAT, W, Canvas
+from .palette import CYAN, INK, RED, WHITE, YELLOW
 from .sprites import HEART, MINI_SHIP
 
 

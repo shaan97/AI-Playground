@@ -2,7 +2,7 @@
 from .engine import Sprite
 from .palette import (AMBER, BLUE, COBALT, CRIMSON, CYAN, GOLD, GOLD_SH, GREY, ICE, INK, LEMON, NAVY, DEEP,
                       ORANGE, RED, RUST, SCARLET, SILVER, SKIN, SKIN_SH, SKY, SLATE, STEEL, WHITE, YELLOW, PINK,
-                      MAGENTA, VIOLET, PURPLE, INDIGO, LIME, GREEN, EMERALD, TEAL, NIGHT, ROSE, BROWN, TAN, ICE)
+                      MAGENTA, VIOLET, PURPLE, INDIGO, ROSE, BROWN)
 
 # --------------------------------------------------------------------------
 # Hero: "Comet Kid"

@@ -3,10 +3,9 @@ import math
 
 import numpy as np
 
-from .engine import Sprite, star_glint
-from .palette import (AMBER, CYAN, GOLD, GREEN, ICE, INK, LEMON, LIME, MAGENTA, ORANGE, PINK, RED, ROSE,
-                      SILVER, WHITE, YELLOW, GREY, STEEL, SLATE, VIOLET, PURPLE, INDIGO, DEEP, NIGHT, EMERALD)
-from .procgen import add_outline, bevel_shade, faceted_star, poly_mask, sphere, _quantize
+from .engine import star_glint
+from .palette import (AMBER, CYAN, GOLD, LEMON, LIME, MAGENTA, ORANGE, PINK, RED, ROSE, WHITE, YELLOW)
+from .procgen import add_outline, bevel_shade, faceted_star, poly_mask, _quantize
 
 STAR_LIGHT = [WHITE, LEMON, YELLOW, GOLD]
 STAR_DARK = [YELLOW, GOLD, AMBER, ORANGE]

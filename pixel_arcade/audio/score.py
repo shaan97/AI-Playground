@@ -223,8 +223,6 @@ def compose():
             "A5:4 C#6:4 E6:4 A5:4"]
     bprog = ["Dm", "Bb", "C", "A"]
     BOSS_BEAT = dict(K="x.x...x.x.x...x.", S="....x.......x...", H="x.x.x.x.x.x.x.x.")
-    for rep, start in enumerate((35,)):
-        pass
     for i in range(4):
         bb = 35 + i
         s.mel("lead", bb, riff[i])

@@ -10,7 +10,6 @@ import os
 import time
 
 import cv2
-import numpy as np
 
 from .audio.mix import master
 from .engine import FPS, FRAMES_PER_BAR
@@ -26,14 +25,13 @@ def main():
     ap.add_argument("--out", default=os.path.join(HERE, "output", "comet_kid.mp4"))
     ap.add_argument("--draft", action="store_true", help="960x540 and a fast x264 preset")
     ap.add_argument("--bars", default=None, help="render only bars A:B (simulation still runs from 0)")
-    ap.add_argument("--crf", type=int, default=16)
+    ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="slow")
     ap.add_argument("--stills", default=None, help="comma separated global frames to save as PNG")
     ap.add_argument("--no-video", action="store_true", help="simulate only; write audio + event log")
     args = ap.parse_args()
 
-    scale = 2.5 if args.draft else 5
-    post = Post(scale=5) if not args.draft else Post(scale=5)
+    post = Post(scale=5)          # always composite at 1080p; drafts are downscaled afterwards
     out_w, out_h = (960, 540) if args.draft else (1920, 1080)
     preset = "veryfast" if args.draft else args.preset
     crf = 20 if args.draft else args.crf
@@ -56,7 +54,6 @@ def main():
 
     ctx = Context()
     t0 = time.time()
-    last_scene = None
     for name, start, n in sched:
         if start >= f1 and not args.no_video:
             break
@@ -84,7 +81,7 @@ def main():
         return
 
     t1 = time.time()
-    data = master(ctx.events, total, tmp_wav)
+    master(ctx.events, total, tmp_wav)
     print(f"audio rendered in {time.time() - t1:.1f}s")
     if args.no_video:
         return

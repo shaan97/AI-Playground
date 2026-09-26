@@ -4,12 +4,11 @@ import math
 
 import numpy as np
 
-from ..engine import W, H, Particles, clamp, ease_in_out, ease_out_back, ease_out_cubic, lerp, star_glint
+from ..engine import W, H, Particles, clamp, ease_in_out, ease_out_back, ease_out_cubic, lerp
 from ..hero import Hero
 from ..logo import logo_letter
-from ..palette import (AMBER, CYAN, FIRE, GOLDEN, ICE, INK, LEMON, LIME, MAGENTA, NEON_PINK, ORANGE, PINK,
-                       PLASMA, RAINBOW, RED, ROSE, SKY, SMOKE, TOXIC, VIOLET, WHITE, YELLOW, BLUE, ORCHID, GREEN,
-                       SCARLET, CRIMSON, COBALT, NAVY)
+from ..palette import (AMBER, CYAN, GOLDEN, ICE, INK, LEMON, MAGENTA, NEON_PINK, ORANGE, PINK, PLASMA, RAINBOW,
+                       RED, ROSE, SKY, TOXIC, VIOLET, WHITE, YELLOW, BLUE, ORCHID, CRIMSON, COBALT, NAVY)
 from ..props import StarCore
 from ..scene import Scene
 from ..sprites import PLAYER_SHIP

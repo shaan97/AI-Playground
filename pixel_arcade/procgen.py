@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .engine import BAYER4, Sprite, bayer
+from .engine import Sprite, bayer
 from .palette import INK, WHITE
 
 
@@ -172,7 +172,6 @@ def value_noise(h, w, scale, seed, octaves=4, tile_x=True):
     s = scale
     for _ in range(octaves):
         base = rng.random((h, w)).astype(np.float32)
-        border = cv2.BORDER_WRAP if tile_x else cv2.BORDER_REFLECT
         # wrap horizontally by padding manually (GaussianBlur lacks BORDER_WRAP)
         pad = int(s * 3) + 1
         if tile_x:

@@ -244,7 +244,6 @@ def inst_pluck(m, dur, vel=1.0, duty=0.125):
 def inst_pad(ms, dur, vel=1.0, attack=0.25, release=0.7, bright=2600):
     gate = int(dur * SR)
     n = gate + int(release * SR)
-    t = t_axis(n)
     x = np.zeros(n)
     for m in ms:
         for det in (-0.006, 0.0, 0.0065):

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from .post import Post
-from .timeline import SCENES, make_scene
+from .timeline import make_scene
 
 
 def contact_sheet(name, frames, out_path, cols=3, scale=2):

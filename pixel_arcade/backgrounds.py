@@ -3,9 +3,9 @@ import math
 
 import numpy as np
 
-from .engine import W, H, bayer, dither_gradient
+from .engine import W, H, dither_gradient
 from .palette import (AMBER, CYAN, DEEP, ICE, INDIGO, INK, LEMON, MAGENTA, NIGHT, ORANGE, PINK, PURPLE,
-                      ROSE, SCARLET, SKY, VIOLET, WHITE, YELLOW, BLUE, COBALT, NAVY, TEAL, ORCHID)
+                      ROSE, SCARLET, VIOLET, WHITE, YELLOW)
 from . import procgen
 
 
@@ -204,6 +204,4 @@ class Space:
                     continue
                 x = cx + math.cos(a) * rx
                 y = cy + s * ry - math.cos(a) * rx * 0.18
-                if not back and abs(x - cx) < 30 and s > 0 and (x - cx) ** 2 + (y - cy) ** 2 < 34 * 34:
-                    pass
                 cv.pset(x, y, col)

@@ -4,12 +4,11 @@ import math
 import numpy as np
 
 from ..backgrounds import HORIZON, Synthwave
-from ..engine import (W, H, Particles, clamp, ease_in_cubic, ease_out_back, ease_out_cubic, shake_offset,
-                      shift_canvas, star_glint)
+from ..engine import (W, H, Particles, ease_in_cubic, ease_out_cubic, shake_offset, shift_canvas, star_glint)
 from ..hero import Hero, draw_hero_scaled
 from ..logo import logo_letter
-from ..palette import (AMBER, BLUE, COBALT, CRIMSON, CYAN, DEEP, GOLDEN, ICE, INK, LEMON, MAGENTA, NAVY, ORANGE,
-                       PINK, PLASMA, RED, ROSE, SCARLET, SKY, SMOKE, WHITE, YELLOW, INDIGO, NEON_PINK, GREY)
+from ..palette import (AMBER, BLUE, COBALT, CRIMSON, CYAN, GOLDEN, ICE, INK, LEMON, NAVY, ORANGE, PLASMA, SCARLET,
+                       SKY, SMOKE, WHITE, YELLOW)
 from ..scene import Scene, beats, stripe_wipe
 
 HOT = [LEMON, YELLOW, YELLOW, AMBER, ORANGE, ORANGE, SCARLET]

@@ -5,8 +5,8 @@ from scipy.io import wavfile
 
 from . import sfx as SFX
 from .score import compose
-from .synth import (DRUMS, SR, bandpass, delay_pingpong, highpass, inst_arp, inst_bass, inst_bell, inst_lead,
-                    inst_pad, inst_pluck, limiter, lowpass, noise, pan_gains, reverb, sweep_lowpass, t_axis)
+from .synth import (DRUMS, SR, delay_pingpong, highpass, inst_arp, inst_bass, inst_bell, inst_lead, inst_pad,
+                    inst_pluck, limiter, noise, pan_gains, reverb, sweep_lowpass, t_axis)
 
 STEP = 60.0 / 150.0 / 4.0          # one 16th note in seconds
 FRAME = 1.0 / 60.0
